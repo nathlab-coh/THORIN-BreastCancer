@@ -1,5 +1,5 @@
 ---
-title: "Figure 2, Transcriptomic Data Analysis"
+title: "Figure 3, Transcriptomic Data Analysis"
 author: "S. Grant"
 date: "2026-09-03"
 output: html_document
