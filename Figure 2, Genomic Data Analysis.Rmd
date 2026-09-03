@@ -1,0 +1,609 @@
+---
+title: "Figure 2, Genomic Data Analysis"
+author: "S. Grant"
+date: "2026-09-03"
+output: html_document
+---
+
+Initial Data Curation & Grouping of Variant Types
+```{r}
+cr_ashion <- read_excel("~//Documents//COH Breast Cohort//HB-1984-CR-updated.xlsx", sheet = "GemExtra")[,c("uuid", "specimenNumber", "gene", "mutationType")]
+
+cr_ashion <- subset(cr_ashion, mutationType %in% c("Missense", "Stop Gain", "Splice Acceptor Variant", "Splice Donor Variant",
+                                              "Frameshift", "Inframe Deletion", "5 prime UTR Variant", "Inframe Insertion", 
+                                              "Stop Lost", "Start Lost", "Alternative Transcript", "Upstream Gene Variant",
+                                              "Initiator codon variant", "Initiator Codon Variant", "disruptive inframe deletion",
+                                              "conservative inframe deletion", "synonymous variant", "splice region variant"))
+
+cr_ashion$mutationType[cr_ashion$mutationType %in% c("splice region variant", "Splice Acceptor Variant", "Splice Donor Variant")] <- "Splice Site"
+cr_ashion$mutationType[cr_ashion$mutationType %in% c("Inframe Deletion", "Inframe Insertion", "disruptive inframe deletion", "conservative inframe deletion")] <- "In Frame"
+cr_ashion$mutationType[cr_ashion$mutationType %in% c("Stop Gain", "Stop Lost")] <- "Nonsense"
+cr_ashion$mutationType[cr_ashion$mutationType %in% c("Start Lost")] <- "Missense"
+cr_ashion$mutationType[cr_ashion$mutationType %in% c("Alternative Transcript", "Initiator codon variant",
+                                                     "Initiator Codon Variant", "synonymous variant",
+                                                     "Upstream Gene Variant")] <- "Other"
+
+cr_tempus <- read_excel("~//Documents//COH Breast Cohort//HB-1984-CR-updated.xlsx", sheet = "Tempus")[,c("uuid", "accessionNumber", "gene", "mutationType")]
+
+cr_tempus <- subset(cr_tempus, mutationType %in% c("Frameshift", "Frameshift - GOF", "Frameshift - LOF", "Frameshift- LOF", "Inframe deletion", "Inframe deletion - GOF", "Inframe deletion - LOF", "Inframe deletion (exon 1) - GOF", "Inframe deletion (exon 7) - GOF", "Inframe insertion", "Inframe insertion - LOF", "Missense variant", "Missense variant - GOF", "Missense variant - LOF", "Missense variant - LOF", "Missense variant (exon 13) - GOF", "Missense variant (exon 2) - GOF", "Missense variant (exon 20) - GOF", "Missense variant (exon 21) - GOF", "Missense variant (exon 3) - GOF", "Missense variant (exon 4) - GOF", "Missense variant (exon 5) - GOF", "Missense variant (exon 7) - GOF", "Missense variant (exon 9) - GOF", "Splice region variant", "Splice region variant - GOF", "Splice region variant - LOF", "Splice region variant - LOF", "Splice region variant- LOF", "Start loss", "Stop gain", "Stop gain - GOF", "Stop gain - LOF", "Stop gain- LOF", "Variant", "Variant - Promoter mutation"))
+
+cr_tempus$mutationType[cr_tempus$mutationType %in% c("Splice region variant", "Splice region variant - GOF", "Splice region variant - LOF", "Splice region variant - LOF", "Splice region variant- LOF")] <- "Splice Site"
+cr_tempus$mutationType[cr_tempus$mutationType %in% c("Inframe deletion", "Inframe deletion - GOF", "Inframe deletion - LOF", "Inframe deletion (exon 1) - GOF", "Inframe deletion (exon 7) - GOF", "Inframe insertion", "Inframe insertion - LOF")] <- "In Frame"
+cr_tempus$mutationType[cr_tempus$mutationType %in% c("Stop gain", "Stop gain - GOF",
+                                                     "Stop gain - LOF", "Stop gain- LOF")] <- "Nonsense"
+cr_tempus$mutationType[cr_tempus$mutationType %in% c("Start loss", "Missense variant", "Missense variant - GOF", "Missense variant - LOF", "Missense variant - LOF", "Missense variant (exon 13) - GOF", "Missense variant (exon 2) - GOF", "Missense variant (exon 20) - GOF", "Missense variant (exon 21) - GOF", "Missense variant (exon 3) - GOF", "Missense variant (exon 4) - GOF", "Missense variant (exon 5) - GOF", "Missense variant (exon 7) - GOF", "Missense variant (exon 9) - GOF")] <- "Missense"
+cr_tempus$mutationType[cr_tempus$mutationType %in% c("Frameshift", "Frameshift - GOF",
+                                                     "Frameshift - LOF", "Frameshift- LOF")] <- "Frameshift"
+cr_tempus$mutationType[cr_tempus$mutationType %in% c("Variant - Promoter mutation", "Variant")] <- "Other"
+
+cr_guardant <- read_excel("~//Documents//COH Breast Cohort//HB-1984-CR-updated.xlsx", sheet = "Guardant")[,c("uuid", "accessionNumber", "gene", "mutationType")]
+
+cr_guardant <- subset(cr_guardant, mutationType == "substitution")
+cr_guardant$mutationType[cr_guardant$mutationType == "substitution"] <- "Unspecified"
+
+colnames(cr_ashion)[2] <- "sampleID"
+colnames(cr_tempus)[2] <- "sampleID"
+colnames(cr_guardant)[2] <- "sampleID"
+
+cr_all <- rbind(cr_ashion, cr_tempus, cr_guardant)
+```
+
+
+```{r}
+pcdm_ashion <- read_excel("~//Documents//COH Breast Cohort//HB-1984-PCDM-updated.xlsx", sheet = "GemExtra")[,c("uuid", "specimenNumber", "gene", "mutationType")]
+
+pcdm_ashion <- subset(pcdm_ashion, mutationType %in% c("Missense", "Stop Gain", "Splice Acceptor Variant", "Splice Donor Variant",
+                                              "Frameshift", "Inframe Deletion", "5 prime UTR Variant", "Inframe Insertion", 
+                                              "Stop Lost", "Start Lost", "Alternative Transcript", "Upstream Gene Variant",
+                                              "Initiator codon variant", "Initiator Codon Variant", "disruptive inframe deletion",
+                                              "conservative inframe deletion", "synonymous variant", "splice region variant"))
+
+pcdm_ashion$mutationType[pcdm_ashion$mutationType %in% c("splice region variant", "Splice Acceptor Variant", "Splice Donor Variant")] <- "Splice Site"
+pcdm_ashion$mutationType[pcdm_ashion$mutationType %in% c("Inframe Deletion", "Inframe Insertion", "disruptive inframe deletion", "conservative inframe deletion")] <- "In Frame"
+pcdm_ashion$mutationType[pcdm_ashion$mutationType %in% c("Stop Gain", "Stop Lost")] <- "Nonsense"
+pcdm_ashion$mutationType[pcdm_ashion$mutationType %in% c("Start Lost")] <- "Missense"
+pcdm_ashion$mutationType[pcdm_ashion$mutationType %in% c("Alternative Transcript", "Initiator codon variant",
+                                                     "Initiator Codon Variant", "synonymous variant",
+                                                     "Upstream Gene Variant")] <- "Other"
+
+pcdm_tempus <- read_excel("~//Documents//COH Breast Cohort//HB-1984-PCDM-updated.xlsx", sheet = "Tempus")[,c("uuid", "accessionNumber", "gene", "mutationType")]
+
+pcdm_tempus <- subset(pcdm_tempus, mutationType %in% c("Inframe deletion", "Missense variant", "Missense variant (exon 20) - GOF", "Missense variant (exon 9) - GOF"))
+
+
+pcdm_tempus$mutationType[pcdm_tempus$mutationType %in% c("Inframe deletion")] <- "In Frame"
+
+pcdm_tempus$mutationType[pcdm_tempus$mutationType %in% c("Start loss", "Missense variant", "Missense variant - GOF", "Missense variant - LOF", "Missense variant - LOF", "Missense variant (exon 13) - GOF", "Missense variant (exon 2) - GOF", "Missense variant (exon 20) - GOF", "Missense variant (exon 21) - GOF", "Missense variant (exon 3) - GOF", "Missense variant (exon 4) - GOF", "Missense variant (exon 5) - GOF", "Missense variant (exon 7) - GOF", "Missense variant (exon 9) - GOF")] <- "Missense"
+pcdm_tempus$mutationType[pcdm_tempus$mutationType %in% c("Frameshift", "Frameshift - GOF",
+                                                     "Frameshift - LOF", "Frameshift- LOF")] <- "Frameshift"
+pcdm_tempus$mutationType[pcdm_tempus$mutationType %in% c("Variant - Promoter mutation", "Variant")] <- "Other"
+
+pcdm_guardant <- read_excel("~//Documents//COH Breast Cohort//HB-1984-PCDM-updated.xlsx", sheet = "Guardant")[,c("uuid", "accessionNumber", "gene", "mutationType")]
+
+pcdm_guardant <- subset(pcdm_guardant, mutationType == "substitution")
+pcdm_guardant$mutationType[pcdm_guardant$mutationType == "substitution"] <- "Unspecified"
+
+colnames(pcdm_ashion)[2] <- "sampleID"
+colnames(pcdm_tempus)[2] <- "sampleID"
+colnames(pcdm_guardant)[2] <- "sampleID"
+
+pcdm_all <- rbind(pcdm_ashion, pcdm_tempus, pcdm_guardant)
+```
+
+```{r}
+data <- rbind(cr_all, pcdm_all)
+#write.csv(data, "~//Documents//COH Breast Cohort//all_mutation_data.csv", row.names = F)
+clin <- read.csv("~//Documents//COH Breast Cohort//combined_clinical_012226.csv")
+
+clin$UUID <- toupper(clin$UUID)
+data$uuid <- toupper(data$uuid)
+clin <- subset(clin, UUID %in% data$uuid)
+clin <- clin[,c(1,3,9)]
+
+colnames(data)[1] <- "UUID"
+data <- merge(data, clin, by = "UUID")
+```
+
+```{r}
+tests <- read_excel("~//Documents//COH Breast Cohort//HB-1984_CR_PCDM_specimenID.xlsx", sheet = " CR_Tests ")
+tests <- subset(tests, source %in% c("ashion", "Guardant", "Tempus"))
+missing <- setdiff(tests$`specimenID/accessionID`, data$sampleID)
+
+tempus2 <- rbind(read_excel("~//Documents//COH Breast Cohort//HB-1984-PCDM-updated.xlsx", sheet = "Tempus")[,c("uuid", "accessionNumber", "gene", "mutationType", "significance")],read_excel("~//Documents//COH Breast Cohort//HB-1984-CR-updated.xlsx", sheet = "Tempus")[,c("uuid", "accessionNumber", "gene", "mutationType",
+                                                                                                                                                                                                                                                                               "significance")])
+tempus2 <- subset(tempus2, significance == "RNA")
+
+missing <- setdiff(missing, tempus2$accessionNumber)
+```
+
+Find Top Mutated Genes
+```{r}
+### find top mutated genes
+calc_gene_freq <- function(Gene, data){
+  sub <- subset(data, gene == Gene)
+  num_mutated <- length(unique(sub$sampleID))
+  percentage <- (num_mutated / length(unique(data$sampleID)))*100
+  return(percentage)
+}
+
+freq <- lapply(unique(data$gene), calc_gene_freq, data = data)
+
+freq_df <- data.frame("Gene" = unique(data$gene), "Percentage" = unlist(freq))
+freq_df <- freq_df[order(-freq_df$Percentage),]
+freq_df <- subset(freq_df, Percentage >= 5)
+
+top_genes_map <- data.frame("sampleID" = unique(data$sampleID))
+for (g in unique(freq_df$Gene)){
+  ls <- c()
+  sub <- subset(data, gene == g)
+  for (sample in unique(data$sampleID)){
+    sub2 <- subset(sub, sampleID == sample)
+    if (nrow(sub2) == 1){
+      type <- sub2$mutationType[1]
+    }
+    if (nrow(sub2) > 1){
+      type <- "Multi Hit"
+    }
+    if (nrow(sub2) == 0){
+      type <- ""
+    }
+    ls <- c(ls, type)
+  }
+  top_genes_map <- cbind(top_genes_map, data.frame(ls))
+}
+
+colnames(top_genes_map) <- c("sampleID", freq_df$Gene)
+```
+
+Make Oncoprint plot (Figure 2a)
+```{r}
+pal <- pal_observable("observable10", alpha = 0.9)(10)
+
+pal_dark <- pal_observable("observable10")(10)
+```
+
+```{r}
+col = c(Missense = pal[1], Frameshift = pal[2], Nonsense = pal[3], `In Frame` = pal[4],
+        `Splice Site` = pal[5], `Multi Hit` = pal[6], `Unspecified` = "grey", `Other` = "black")
+
+top_genes_map_anns <- unique(merge(top_genes_map, subset(unique(data[,c(2,5,6)]), sampleID %in% top_genes_map$sampleID), by = "sampleID"))
+
+stage_col = c(`Stage 0` = pal[6], `Stage I` = pal[7], `Stage II` = pal[8], `Stage III` = pal[9],
+              `Stage IV` = pal[10], `Not Reported` = "white")
+
+stage_ann <- HeatmapAnnotation(Stage = top_genes_map_anns$Stage, col = list(Stage = stage_col))
+
+top_genes_map_anns$Subtype[is.na(top_genes_map_anns$Subtype) == T] <- "Not Reported"
+
+subtype_col = c("HR+/HER2-" = pal[4],"HR+/HER2+" = pal[3],"HR-/HER2+" = pal[2],"HR-/HER2-" = pal[1],"Not Reported" = "white")
+
+subtype_ann <- HeatmapAnnotation(Subtype = top_genes_map_anns$Subtype, col = list(Subtype = subtype_col))
+```
+
+```{r}
+top_genes_map_anns$Subtype <- factor(top_genes_map_anns$Subtype, levels = c("HR+/HER2+", "HR-/HER2+",  "HR+/HER2-","HR-/HER2-", "Not Reported"))
+
+oncoPrint(as.matrix(t(top_genes_map[,-1])),
+          bottom_annotation = c(stage_ann, subtype_ann),
+          alter_fun = list(
+                background = function(x, y, w, h) {
+        grid.rect(x, y, w, h, gp = gpar(fill = "white", col = NA))
+    },
+            Missense = alter_graphic("rect", width = 0.9, height = 0.9, fill = col["Missense"]),
+            Nonsense = alter_graphic("rect", width = 0.9, height = 0.9, fill = col["Nonsense"]),
+            Frameshift = alter_graphic("rect", width = 0.9, height = 0.9, fill = col["Frameshift"]),
+            `In Frame` = alter_graphic("rect", width = 0.9, height = 0.9, fill = col["In Frame"]),
+            `Splice Site` = alter_graphic("rect", width = 0.9, height = 0.9, fill = col["Splice Site"]),
+            `Multi Hit` = alter_graphic("rect", width = 0.9, height = 0.9, fill = col["Multi Hit"]),
+            Other = alter_graphic("rect", width = 0.9, height = 0.9, fill = col["Other"]),
+            Unspecified = alter_graphic("rect", width = 0.9, height = 0.9, fill = col["Unspecified"])
+          ),
+          col = col, column_split = top_genes_map_anns$Subtype, alter_fun_is_vectorized = FALSE, column_title_rot = 25,
+    use_raster = F)
+```
+
+Chisq analysis somatic mutations (Figure 2b)
+```{r}
+data <- rbind(cr_all, pcdm_all)
+clin <- read.csv("~//Documents//COH Breast Cohort//combined_clinical_012226.csv")
+
+clin$UUID <- toupper(clin$UUID)
+data$uuid <- toupper(data$uuid)
+clin <- subset(clin, UUID %in% data$uuid)
+#clin <- clin[,c(1,3,9)]
+
+colnames(data)[1] <- "UUID"
+data <- merge(data, clin, by = "UUID")
+
+clin2 <- unique(data[,c(2,6,12)])
+```
+
+By Subtype and stage
+```{r}
+chisq_subtype <- function(x, df){
+  sub <- subset(df, gene == x)
+  
+  hrposher2_early <- nrow(subset(sub, Subtype == "HR+/HER2+" & Stage %in% c("Stage I", "Stage II", "Stage III")))
+  hrposher2_stageiv <- nrow(subset(sub, Subtype == "HR+/HER2+" & Stage == "Stage IV"))
+  
+  hrnegher2_early <- nrow(subset(sub, Subtype == "HR-/HER2+" & Stage %in% c("Stage I", "Stage II", "Stage III")))
+  hrnegher2_stageiv <- nrow(subset(sub, Subtype == "HR-/HER2+" & Stage == "Stage IV"))
+  
+  hrpos_early <- nrow(subset(sub, Subtype == "HR+/HER2-" & Stage %in% c("Stage I", "Stage II", "Stage III")))
+  hrpos_stageiv <- nrow(subset(sub, Subtype == "HR+/HER2-" & Stage == "Stage IV"))
+  
+  tn_early <- nrow(subset(sub, Subtype == "HR-/HER2-" & Stage %in% c("Stage I", "Stage II", "Stage III")))
+  tn_stageiv <- nrow(subset(sub, Subtype == "HR-/HER2-" & Stage == "Stage IV"))
+  
+  row <- data.frame("HRPosHER2Pos_early" = hrposher2_early, "HRPosHER2Pos_IV" = hrposher2_stageiv,
+                    "HRNegHER2Pos_early" = hrnegher2_early, "HRNegHER2Pos_IV" = hrnegher2_stageiv,
+                    "HRPos_early" = hrpos_early, "HRPos_IV" = hrpos_stageiv,
+                    "TN_early" = tn_early, "TN_IV" = tn_stageiv)
+  rownames(row) <- x
+  return(row)
+  }
+
+
+subtype_chi <- dplyr::bind_rows(pbapply::pblapply(unique(data$gene), chisq_subtype, df = data))
+subtype_chi <- subtype_chi[rowSums(subtype_chi == 0) != ncol(subtype_chi), ]
+
+df <- as.table(as.matrix(subtype_chi))
+df1 <- as.table(as.matrix(subtype_chi[,c(1,2)]))
+
+library(chisq.posthoc.test)
+set.seed(1)
+chisq1 <- chisq.posthoc.test(df, simulate.p.value = TRUE, method = "bonferroni")
+
+pval_df <- subset(chisq1, Value == "p values")
+
+for (i in 3:ncol(pval_df)){
+  pval_df[,i] <- gsub("[*]", "", pval_df[,i])
+}
+
+pval_df[,c(3:ncol(pval_df))] <- apply(pval_df[,c(3:ncol(pval_df))], 2, as.numeric)
+cutoff <- 0.001
+pval_df <- subset(pval_df, HRPosHER2Pos_early < cutoff | HRPosHER2Pos_IV < cutoff | 
+                    HRNegHER2Pos_early < cutoff| HRNegHER2Pos_IV < cutoff | 
+                    HRPos_early < cutoff | HRPos_IV < cutoff |
+                    TN_early < cutoff | TN_IV < cutoff)
+significant_genes <- pval_df$Dimension
+```
+
+Pick out top significant genes based on residuals for each group (top 5)
+```{r}
+res <- subset(chisq1, Value == "Residuals" & Dimension %in% significant_genes)
+res[,c(3:ncol(res))] <- apply(res[,c(3:ncol(res))], 2, as.numeric)
+rownames(res) <- res$Dimension
+
+keep_genes <- c()
+for (x in colnames(pval_df)[3:ncol(pval_df)]){
+  sub <- pval_df[pval_df[[x]] < 0.001,]
+  res_sub <- res[sub$Dimension,]
+  res_sub <- res_sub[,c(x, "Dimension")]
+  res_sub[,1] <- abs(res_sub[,1])
+  res_sub <- res_sub[order(-res_sub[,1]),]
+  keep_genes <- c(keep_genes, res_sub$Dimension[1:5])
+}
+keep_genes <- unique(keep_genes)
+```
+
+```{r}
+res <- subset(chisq1, Value == "Residuals" & Dimension %in% keep_genes)
+res[,c(3:ncol(res))] <- apply(res[,c(3:ncol(res))], 2, as.numeric)
+rownames(res) <- res$Dimension
+res <- res[,-c(1:2)]
+colnames(res) <- c("HR+/HER2+ (Stage I-III)", "HR+/HER2+ (Stage IV)", 
+                   "HR-/HER2+ (Stage I-III)", "HR-/HER2+ (Stage IV)", 
+                   "HR+/HER2- (Stage I-III)", "HR+/HER2- (Stage IV)", 
+                   "HR-/HER2- (Stage I-III)", "HR-/HER2- (Stage IV)")
+
+pval <- subset(chisq1, Value == "p values" & Dimension %in% keep_genes)
+pval[,c(3:ncol(pval))] <- apply(pval[,c(3:ncol(pval))], 2, gsub, pattern = "[*]", replacement = "")
+pval[,c(3:ncol(pval))] <- apply(pval[,c(3:ncol(pval))], 2, as.numeric)
+rownames(pval) <- pval$Dimension
+pval <- pval[,-c(1:2)]
+colnames(pval) <- c("HR+/HER2+ (Stage I-III)", "HR+/HER2+ (Stage IV)", 
+                   "HR-/HER2+ (Stage I-III)", "HR-/HER2+ (Stage IV)", 
+                   "HR+/HER2- (Stage I-III)", "HR+/HER2- (Stage IV)", 
+                   "HR-/HER2- (Stage I-III)", "HR-/HER2- (Stage IV)")
+
+res <- res[keep_genes,]
+pval <- pval[keep_genes,]
+
+my_colors <- colorRampPalette(c(pal[1], "white",  pal[3]))(200) 
+corrplot(data.matrix(res), is.cor = FALSE, col = my_colors,
+         tl.col = "black", type = "full", cl.ratio = 0.3, tl.srt = 90, tl.cex = 0.5, cl.cex = 0.6, cl.pos = 'r', cl.length = 10,
+         p.mat = data.matrix(pval), sig.level = c(0.001, 0.01, 0.05), , pch.cex = 0.6, insig = 'label_sig')
+```
+
+Mutual exclusivity analysis (Figure 2c)
+
+```{r}
+library(maftools)
+data_filt <- data[,c(2,3,4,6,12)]
+colnames(data_filt) <- c("Tumor_Sample_Barcode", "Hugo_Symbol", "Variant_Classification", "Stage", "Subtype")
+data_filt$Variant_Type <- "SNP"
+data_filt$Chromosome <- NA
+data_filt$Start_Position <- NA
+data_filt$End_Position <- NA
+data_filt$Reference_Allele <- NA
+data_filt$Tumor_Seq_Allele2 <- NA
+data_filt$Variant_Classification[data_filt$Variant_Classification == "Missense"] <- "Missense_Mutation"
+data_filt$Variant_Classification[data_filt$Variant_Classification == "Nonsense"] <- "Nonsense_Mutation"
+data_filt$Variant_Classification[data_filt$Variant_Classification == "Frameshift"] <- "Frame_Shift_Ins"
+data_filt$Variant_Classification[data_filt$Variant_Classification == "Splice Site"] <- "Splice_Site"
+data_filt$Variant_Classification[data_filt$Variant_Classification == "In Frame"] <- "In_Frame_Ins"
+
+
+#write.table(data_filt, file = "my_mutations.maf", sep = "\t", quote = FALSE, row.names = FALSE)
+data_maf <- read.maf(maf = data_filt[,c(1:3,6:11)], clinicalData = data_filt[,c(1,4,5)],
+                     removeDuplicatedVariants = F)
+```
+
+```{r}
+somaticInteractions(maf = data_maf, top = 25, pvalue = c(0.05, 0.01), colPal = "RdBu")
+```
+
+HR+/HER2-
+
+```{r}
+data_filt <- subset(data[,c(2,3,4,6,12)], Subtype == "HR+/HER2-")
+colnames(data_filt) <- c("Tumor_Sample_Barcode", "Hugo_Symbol", "Variant_Classification", "Stage", "Subtype")
+data_filt$Variant_Type <- "SNP"
+data_filt$Chromosome <- NA
+data_filt$Start_Position <- NA
+data_filt$End_Position <- NA
+data_filt$Reference_Allele <- NA
+data_filt$Tumor_Seq_Allele2 <- NA
+data_filt$Variant_Classification[data_filt$Variant_Classification == "Missense"] <- "Missense_Mutation"
+data_filt$Variant_Classification[data_filt$Variant_Classification == "Nonsense"] <- "Nonsense_Mutation"
+data_filt$Variant_Classification[data_filt$Variant_Classification == "Frameshift"] <- "Frame_Shift_Ins"
+data_filt$Variant_Classification[data_filt$Variant_Classification == "Splice Site"] <- "Splice_Site"
+data_filt$Variant_Classification[data_filt$Variant_Classification == "In Frame"] <- "In_Frame_Ins"
+
+data_maf <- read.maf(maf = data_filt[,c(1:3,6:11)], clinicalData = data_filt[,c(1,4,5)],
+                     removeDuplicatedVariants = F)
+```
+
+```{r}
+somaticInteractions(maf = data_maf, top = 10, pvalue = c(0.05, 0.01), colPal = "RdBu")
+```
+
+HR+/HER2+
+
+```{r}
+data_filt <- subset(data[,c(2,3,4,6,12)], Subtype == "HR+/HER2+")
+colnames(data_filt) <- c("Tumor_Sample_Barcode", "Hugo_Symbol", "Variant_Classification", "Stage", "Subtype")
+data_filt$Variant_Type <- "SNP"
+data_filt$Chromosome <- NA
+data_filt$Start_Position <- NA
+data_filt$End_Position <- NA
+data_filt$Reference_Allele <- NA
+data_filt$Tumor_Seq_Allele2 <- NA
+data_filt$Variant_Classification[data_filt$Variant_Classification == "Missense"] <- "Missense_Mutation"
+data_filt$Variant_Classification[data_filt$Variant_Classification == "Nonsense"] <- "Nonsense_Mutation"
+data_filt$Variant_Classification[data_filt$Variant_Classification == "Frameshift"] <- "Frame_Shift_Ins"
+data_filt$Variant_Classification[data_filt$Variant_Classification == "Splice Site"] <- "Splice_Site"
+data_filt$Variant_Classification[data_filt$Variant_Classification == "In Frame"] <- "In_Frame_Ins"
+
+data_maf <- read.maf(maf = data_filt[,c(1:3,6:11)], clinicalData = data_filt[,c(1,4,5)],
+                     removeDuplicatedVariants = F)
+```
+```{r}
+somaticInteractions(maf = data_maf, top = 10, pvalue = c(0.05, 0.01), colPal = "RdBu")
+```
+
+HR-/HER2+
+
+```{r}
+data_filt <- subset(data[,c(2,3,4,6,12)], Subtype == "HR-/HER2+")
+colnames(data_filt) <- c("Tumor_Sample_Barcode", "Hugo_Symbol", "Variant_Classification", "Stage", "Subtype")
+data_filt$Variant_Type <- "SNP"
+data_filt$Chromosome <- NA
+data_filt$Start_Position <- NA
+data_filt$End_Position <- NA
+data_filt$Reference_Allele <- NA
+data_filt$Tumor_Seq_Allele2 <- NA
+data_filt$Variant_Classification[data_filt$Variant_Classification == "Missense"] <- "Missense_Mutation"
+data_filt$Variant_Classification[data_filt$Variant_Classification == "Nonsense"] <- "Nonsense_Mutation"
+data_filt$Variant_Classification[data_filt$Variant_Classification == "Frameshift"] <- "Frame_Shift_Ins"
+data_filt$Variant_Classification[data_filt$Variant_Classification == "Splice Site"] <- "Splice_Site"
+data_filt$Variant_Classification[data_filt$Variant_Classification == "In Frame"] <- "In_Frame_Ins"
+
+data_maf <- read.maf(maf = data_filt[,c(1:3,6:11)], clinicalData = data_filt[,c(1,4,5)],
+                     removeDuplicatedVariants = F)
+```
+
+```{r}
+somaticInteractions(maf = data_maf, top = 10, pvalue = c(0.05, 0.01), colPal = "RdBu")
+```
+
+TNBC
+
+```{r}
+data_filt <- subset(data[,c(2,3,4,6,12)], Subtype == "HR-/HER2-")
+colnames(data_filt) <- c("Tumor_Sample_Barcode", "Hugo_Symbol", "Variant_Classification", "Stage", "Subtype")
+data_filt$Variant_Type <- "SNP"
+data_filt$Chromosome <- NA
+data_filt$Start_Position <- NA
+data_filt$End_Position <- NA
+data_filt$Reference_Allele <- NA
+data_filt$Tumor_Seq_Allele2 <- NA
+data_filt$Variant_Classification[data_filt$Variant_Classification == "Missense"] <- "Missense_Mutation"
+data_filt$Variant_Classification[data_filt$Variant_Classification == "Nonsense"] <- "Nonsense_Mutation"
+data_filt$Variant_Classification[data_filt$Variant_Classification == "Frameshift"] <- "Frame_Shift_Ins"
+data_filt$Variant_Classification[data_filt$Variant_Classification == "Splice Site"] <- "Splice_Site"
+data_filt$Variant_Classification[data_filt$Variant_Classification == "In Frame"] <- "In_Frame_Ins"
+
+data_maf <- read.maf(maf = data_filt[,c(1:3,6:11)], clinicalData = data_filt[,c(1,4,5)],
+                     removeDuplicatedVariants = F)
+```
+
+```{r}
+somaticInteractions(maf = data_maf, top = 10, pvalue = c(0.05, 0.01), colPal = "RdBu")
+```
+
+Top Copy number alterations (Supplementary Figure)
+
+```{r}
+cr_ashion <- read_excel("~//Documents//COH Breast Cohort//HB-1984-CR-updated.xlsx", sheet = "GemExtra")[,c("uuid", "specimenNumber", "gene", "mutationType")]
+
+cr_ashion <- subset(cr_ashion, mutationType %in% c("Amplification", "Deletion"))
+
+cr_ashion$mutationType[cr_ashion$mutationType == "Amplification"] <- "Gain"
+cr_ashion$mutationType[cr_ashion$mutationType == "Deletion"] <- "Loss"
+
+cr_tempus <- read_excel("~//Documents//COH Breast Cohort//HB-1984-CR-updated.xlsx", sheet = "Tempus")[,c("uuid", "accessionNumber", "gene", "mutationType")]
+colnames(cr_tempus)[3] <- "mutationType"
+
+cr_tempus <- subset(cr_tempus, mutationType %in% c("Copy number gain", "Copy number loss"))
+
+cr_tempus$mutationType[cr_tempus$mutationType %in% c("Copy number gain")] <- "Gain"
+cr_tempus$mutationType[cr_tempus$mutationType %in% c("Copy number loss")] <- "Loss"
+
+cr_guardant <- read_excel("~//Documents//COH Breast Cohort//HB-1984-CR-updated.xlsx", sheet = "Guardant")[,c("uuid", "accessionNumber", "gene", "mutationType")]
+
+cr_guardant <- subset(cr_guardant, mutationType %in% c("amplification", "deletion"))
+cr_guardant$mutationType[cr_guardant$mutationType == "amplification"] <- "Gain"
+cr_guardant$mutationType[cr_guardant$mutationType == "deletion"] <- "Loss"
+
+colnames(cr_ashion)[2] <- "accessionNumber"
+
+cr_all <- rbind(cr_ashion, cr_tempus, cr_guardant)
+```
+
+```{r}
+pcdm_ashion <- read_excel("~//Documents//COH Breast Cohort//HB-1984-PCDM-updated.xlsx", sheet = "GemExtra")[,c("uuid", "specimenNumber", "gene", "mutationType")]
+
+pcdm_ashion <- subset(pcdm_ashion, mutationType %in% c("Amplification", "Deletion"))
+
+pcdm_ashion$mutationType[pcdm_ashion$mutationType == "Amplification"] <- "Gain"
+pcdm_ashion$mutationType[pcdm_ashion$mutationType == "Deletion"] <- "Loss"
+
+pcdm_tempus <- read_excel("~//Documents//COH Breast Cohort//HB-1984-PCDM-updated.xlsx", sheet = "Tempus")[,c("uuid", "accessionNumber", "gene", "mutationType")]
+
+
+pcdm_tempus <- subset(pcdm_tempus, mutationType %in% c("Copy number gain", "Copy number loss"))
+
+pcdm_tempus$mutationType[pcdm_tempus$mutationType %in% c("Copy number gain")] <- "Gain"
+pcdm_tempus$mutationType[pcdm_tempus$mutationType %in% c("Copy number loss")] <- "Loss"
+
+pcdm_guardant <- read_excel("~//Documents//COH Breast Cohort//HB-1984-PCDM-updated.xlsx", sheet = "Guardant")[,c("uuid", "accessionNumber", "gene", "mutationType")]
+
+pcdm_guardant <- subset(pcdm_guardant, mutationType %in% c("amplification", "deletion"))
+pcdm_guardant$mutationType[pcdm_guardant$mutationType == "amplification"] <- "Gain"
+pcdm_guardant$mutationType[pcdm_guardant$mutationType == "deletion"] <- "Loss"
+
+colnames(pcdm_ashion)[2] <- "accessionNumber"
+
+pcdm_all <- rbind(pcdm_ashion, pcdm_tempus, pcdm_guardant)
+```
+
+
+```{r}
+data <- rbind(cr_all, pcdm_all)
+clin <- read.csv("~//Documents//COH Breast Cohort//combined_clinical_012226.csv")
+
+clin$UUID <- toupper(clin$UUID)
+data$uuid <- toupper(data$uuid)
+clin <- subset(clin, UUID %in% data$uuid)
+clin <- clin[,c(1,3,9)]
+
+colnames(data)[1] <- "UUID"
+data <- merge(data, clin, by = "UUID")
+```
+
+```{r}
+### find top mutated genes
+calc_gene_freq <- function(Gene, data){
+  sub <- subset(data, gene == Gene)
+  num_mutated <- length(unique(sub$accessionNumber))
+  if (num_mutated > 0){
+  percentage <- (num_mutated / length(unique(data$accessionNumber)))*100
+  }
+  if (num_mutated == 0){percentage <- 0}
+  return(percentage)
+}
+
+freq_df_all <- data.frame()
+for (subtype in c("HR+/HER2+", "HR-/HER2+", "HR+/HER2-", "HR-/HER2-")){
+  sub_data_gain <- subset(data, mutationType == "Gain" & Subtype == subtype)
+  sub_data_loss <- subset(data, mutationType == "Loss" & Subtype == subtype)
+  
+  freq_gain <- lapply(unique(sub_data_gain$gene), calc_gene_freq, data = sub_data_gain)
+  freq_df_gain <- data.frame("Gene" = unique(sub_data_gain$gene), "Percentage" = unlist(freq_gain))
+  
+  freq_loss <- lapply(unique(sub_data_loss$gene), calc_gene_freq, data = sub_data_loss)
+  freq_df_loss <- data.frame("Gene" = unique(sub_data_loss$gene), "Percentage" = unlist(freq_loss))
+  
+  freq_df_gain$Type <- "Gain"
+  freq_df_loss$Type <- "Loss"
+
+  freq_df <- rbind(freq_df_gain, freq_df_loss)
+  
+  freq_df <- freq_df[order(-freq_df$Percentage),]
+  freq_df <- freq_df[1:10,]
+  freq_df$Subtype <- subtype
+
+  freq_df_all <- rbind(freq_df_all, freq_df)
+}
+```
+
+Plot data
+```{r}
+hrpos_cna <- subset(freq_df_all, Subtype == "HR+/HER2-")
+hrpos_cna$Gene <- factor(hrpos_cna$Gene, levels = rev(hrpos_cna$Gene))
+cna_plot_hrpos <- ggplot(hrpos_cna, aes(y = Gene, x = Percentage, fill = Type)) +
+  geom_point(aes(fill = Type, color = Type), size = 4) +
+  facet_wrap(~Subtype) +
+  geom_segment( aes(x=0, xend=Percentage, y=Gene, yend=Gene, color = Type), size = 1) +
+  scale_color_manual(values = c("Gain" = pal[3], "Loss" = pal[1])) +
+  xlab("Percentage of Tumors") +
+  theme_classic()
+cna_plot_hrpos
+```
+```{r}
+hrpos_her2pos_cna <- subset(freq_df_all, Subtype == "HR+/HER2+")
+hrpos_her2pos_cna$Gene <- factor(hrpos_her2pos_cna$Gene, levels = rev(hrpos_her2pos_cna$Gene))
+cna_plot_hrpos_her2pos <- ggplot(hrpos_her2pos_cna, aes(y = Gene, x = Percentage, fill = Type)) +
+  geom_point(aes(fill = Type, color = Type), size = 4) +
+  facet_wrap(~Subtype) +
+  geom_segment( aes(x=0, xend=Percentage, y=Gene, yend=Gene, color = Type), size = 1) +
+  scale_color_manual(values = c("Gain" = pal[3], "Loss" = pal[1])) +
+  xlab("Percentage of Tumors") +
+  theme_classic()
+cna_plot_hrpos_her2pos
+```
+
+```{r}
+hrneg_her2pos_cna <- subset(freq_df_all, Subtype == "HR-/HER2+")
+hrneg_her2pos_cna$Gene <- factor(hrneg_her2pos_cna$Gene, levels = rev(hrneg_her2pos_cna$Gene))
+cna_plot_hrneg_her2pos <- ggplot(hrneg_her2pos_cna, aes(y = Gene, x = Percentage, fill = Type)) +
+  geom_point(aes(fill = Type, color = Type), size = 4) +
+  facet_wrap(~Subtype) +
+  geom_segment( aes(x=0, xend=Percentage, y=Gene, yend=Gene, color = Type), size = 1) +
+  scale_color_manual(values = c("Gain" = pal[3], "Loss" = pal[1])) +
+  xlab("Percentage of Tumors") +
+  theme_classic()
+cna_plot_hrneg_her2pos
+```
+
+```{r}
+tn_cna <- subset(freq_df_all, Subtype == "HR-/HER2-")
+tn_cna$Gene <- factor(tn_cna$Gene, levels = rev(tn_cna$Gene))
+cna_plot_tn <- ggplot(tn_cna, aes(y = Gene, x = Percentage, fill = Type)) +
+  geom_point(aes(fill = Type, color = Type), size = 4) +
+  facet_wrap(~Subtype) +
+  geom_segment( aes(x=0, xend=Percentage, y=Gene, yend=Gene, color = Type), size = 1) +
+  scale_color_manual(values = c("Gain" = pal[3], "Loss" = pal[1])) +
+  xlab("Percentage of Tumors") +
+  theme_classic()
+cna_plot_tn
+```
+
+```{r}
+ggpubr::ggarrange(cna_plot_hrpos, cna_plot_hrpos_her2pos, cna_plot_hrneg_her2pos, cna_plot_tn,
+                  ncol = 4, nrow = 1, common.legend = T, align = "v")
+```
+
+

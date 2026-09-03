@@ -1,0 +1,636 @@
+---
+title: "Figure 2, Transcriptomic Data Analysis"
+author: "S. Grant"
+date: "2026-09-03"
+output: html_document
+---
+
+Load RNA-seq data, match IDs to clinical
+```{r}
+rna <- read.csv("rnaseq.csv")
+genes <- rna$X
+rna <- rna[,-1]
+rna <- data.frame(apply(rna, 2, as.numeric))
+rna <- log2(rna + 1)
+rownames(rna) <- genes
+```
+
+
+```{r}
+data <- data.frame(t(rna))
+rownames(data) <- gsub("X.", "/", rownames(data))
+data$ID <- gsub("[.]", "-", rownames(data))
+
+clin <- read.csv("combined_clinical.csv")
+
+clin$ID <- toupper(clin$ID)
+
+clin <- subset(clin, ID %in% data$ID)
+clin <- clin[,c(16,3,9)]
+
+clin <- unique(clin)
+rownames(clin) <- clin$ID
+colnames(rna) <- gsub("X.", "/", colnames(rna))
+colnames(rna) <- gsub("[.]", "-", colnames(rna))
+rna2 <- rna[,clin$ID]
+
+data <- merge(data, clin, by = "ID")
+
+clin <- clin[,-1]
+```
+
+Run ANOVA by Subtype (COSMIC Genes)
+
+```{r}
+cosmic <- read.csv("~//Documents//Census_allTue May 13 22_01_58 2025.csv")
+cosmic <- subset(cosmic, Gene.Symbol %in% rownames(rna))
+
+rna_cosmic <- rna[cosmic$Gene.Symbol,]
+```
+
+
+```{r}
+data_sub <- data
+data_sub2 <- data_sub[,-c(1,(ncol(data_sub)-1))]
+data_sub2 <- subset(data_sub2, is.na(Subtype) == F)
+data_sub2$Subtype <- as.numeric(as.factor(data_sub2$Subtype))
+
+anov <- function(x, data){
+  aov_model <- aov(as.formula(sprintf("%s ~ Subtype", x)), data)
+  anova_results <- anova(aov_model)
+  anova_results$Pathway <- x
+  return(anova_results[1,])
+}
+
+genes <- colnames(data_sub2)[-ncol(data_sub2)]
+anova_results <- dplyr::bind_rows(pbapply::pblapply(genes, anov, data = data_sub2))
+```
+
+```{r}
+anova_results2 <- subset(anova_results, Pathway %in% cosmic$Gene.Symbol)
+anova_significant <- subset(anova_results, `Pr(>F)` < 0.05)
+anova_significant <- anova_significant[order(-anova_significant$`F value`),]
+anova_significant <- anova_significant[1:30,]
+```
+
+```{r}
+anova_significant$Pathway <- gsub("[.]", "-", anova_significant$Pathway)
+rownames(rna) <- gsub("[.]", "-", rownames(rna))
+anova_significant <- subset(anova_significant, Pathway %in% rownames(rna))
+rna_anov <- rna[anova_significant$Pathway,]
+```
+
+```{r}
+data <- data.frame(t(rna_anov))
+rownames(data) <- gsub("X.", "/", rownames(data))
+data$ID <- gsub("[.]", "-", rownames(data))
+
+clin <- read.csv("~//Documents//COH Breast Cohort//combined_clinical_012226.csv")
+
+clin$ID <- toupper(clin$ID)
+
+clin <- subset(clin, ID %in% data$ID)
+clin <- clin[,c(16,3,9)]
+
+data <- merge(data, clin, by = "ID")
+```
+
+```{r}
+pal <- pal_observable("observable10", alpha = 0.9)(10)
+```
+
+Plot Heatmap (Supplementary Figure)
+```{r}
+library(circlize)
+data <- subset(data, is.na(Subtype) == F)
+data$Subtype <- factor(data$Subtype, levels = c("HR+/HER2-", "HR+/HER2+", "HR-/HER2+", "HR-/HER2-"))
+
+colors = colorRamp2(c(min(rna_anov), mean(unlist(rna_anov)), max(rna_anov)), c(pal[1], "white", pal[3]))
+column_ha = HeatmapAnnotation(Stage = data$Stage, Subtype = data$Subtype,
+                              col = list(Stage = c("Stage 0" = pal[5],
+                                                   "Stage I" = pal[6],
+                                                   "Stage II" = pal[7],
+                                                   "Stage III" = pal[8],
+                                                   "Stage IV" = pal[9],
+                                                   "Not Reported" = "white"),
+                                         Subtype = c("HR+/HER2-" = pal[4],
+                                                   "HR+/HER2+" = pal[3],
+                                                    "HR-/HER2+" = pal[2],
+                                                   "HR-/HER2-" = pal[1],
+                                                   "Not Reported" = "white")))
+
+Heatmap(t(data[,2:(ncol(data)-2)]), name = "log2", col = colors, na_col = "white",  top_annotation = column_ha, show_heatmap_legend = T, show_column_names = FALSE, column_split = data$Subtype,
+        cluster_column_slices = T, show_row_names = T, column_title_rot = 45)
+```
+
+Run ssGSEA scores using GSVA package
+
+```{r}
+# calculate ssGSEA scores for Hallmark and KEGG
+
+hallmark_gene_sets <- msigdbr(
+  species = "Homo sapiens", # Can change this to what species you need
+  collection = "H" # Only hallmark gene sets
+)
+
+hallmarks_list <- split(
+  hallmark_gene_sets$gene_symbol,
+  hallmark_gene_sets$gs_name
+)
+
+expression_matrix <- as.matrix(rna)
+
+gsvapar <- ssgseaParam(exprData = expression_matrix,
+                                    geneSets = hallmarks_list,
+                                    minSize = 1, maxSize = Inf,
+                                    alpha = 0.25, normalize = T)
+
+gsea_results <- gsva(param = gsvapar)
+
+hallmark_scores <- as.data.frame(gsea_results)
+hallmark_scores <- hallmark_scores[c("HALLMARK_APOPTOSIS", "HALLMARK_DNA_REPAIR", "HALLMARK_E2F_TARGETS",
+                                     "HALLMARK_EPITHELIAL_MESENCHYMAL_TRANSITION", "HALLMARK_ESTROGEN_RESPONSE_EARLY",
+                                     "HALLMARK_ESTROGEN_RESPONSE_LATE",
+                                     "HALLMARK_HEDGEHOG_SIGNALING", "HALLMARK_INTERFERON_GAMMA_RESPONSE",
+                                     "HALLMARK_MYC_TARGETS_V1", "HALLMARK_NOTCH_SIGNALING", "HALLMARK_P53_PATHWAY",
+                                     "HALLMARK_TGF_BETA_SIGNALING", "HALLMARK_TNFA_SIGNALING_VIA_NFKB",
+                                     "HALLMARK_WNT_BETA_CATENIN_SIGNALING"),]
+
+
+kegg_gene_sets <- msigdbr(
+  species = "Homo sapiens",
+  collection = "C2",
+  subcollection = "CP:KEGG_LEGACY"
+)
+
+kegg_list <- split(
+  kegg_gene_sets$gene_symbol,
+  kegg_gene_sets$gs_name
+)
+
+gsvapar <- ssgseaParam(exprData = expression_matrix,
+                       geneSets = kegg_list,
+                       minSize = 1, maxSize = Inf,
+                       alpha = 0.25, normalize = T)
+
+gsea_results <- gsva(param = gsvapar)
+
+kegg_scores <- as.data.frame(gsea_results)
+kegg_scores <- kegg_scores[c("KEGG_VEGF_SIGNALING_PATHWAY", "KEGG_MTOR_SIGNALING_PATHWAY",
+                             "KEGG_MAPK_SIGNALING_PATHWAY", "KEGG_JAK_STAT_SIGNALING_PATHWAY",
+                             "KEGG_ERBB_SIGNALING_PATHWAY", "KEGG_CELL_CYCLE"),]
+
+
+
+hallmark_scores2 <- as.data.frame(t(hallmark_scores))
+kegg_scores2 <- as.data.frame(t(kegg_scores))
+
+hallmark_scores2$ID <- rownames(hallmark_scores2)
+kegg_scores2$ID <- rownames(kegg_scores2)
+
+data <- merge(hallmark_scores2, kegg_scores2, by = "ID")
+data <- merge(data, clin, by = "ID")
+data <- na.omit(data)
+data <- unique(data)
+```
+
+Run Limma and differential expression analysis (Figure 2d)
+
+```{r}
+## fit linear model
+
+# create design matrix
+des_mat <- model.matrix(~Subtype + 0, data = data[,-1])
+# Make the column names less messy
+colnames(des_mat) <- c("HRnegHER2neg", "HRnegHER2pos", "HRposHER2neg", "HRposHER2pos")
+
+data <- data.frame(t(data[,-c(1,ncol(data))]))
+# Apply linear model to data
+fit <- lmFit(data, design = des_mat)
+
+# Apply empirical Bayes to smooth standard errors
+fit <- eBayes(fit)
+
+# make contrasts
+contrast_matrix <- makeContrasts(
+  "HRposHER2negvsOther" = HRposHER2neg - (HRposHER2pos + HRnegHER2pos + HRnegHER2neg) / 3,
+  "HRposHER2posvsOther" = HRposHER2pos - (HRposHER2neg + HRnegHER2pos + HRnegHER2neg) / 3,
+  "HRnegHER2posvsOther" = HRnegHER2pos - (HRposHER2pos + HRposHER2neg + HRnegHER2neg) / 3,
+  "HRnegHER2negvsOther" = HRnegHER2neg - (HRposHER2pos + HRnegHER2pos + HRposHER2neg) / 3,
+  levels = des_mat
+)
+
+# Fit the model according to the contrasts matrix
+contrasts_fit <- contrasts.fit(fit, contrast_matrix)
+
+# Re-smooth the Bayes
+contrasts_fit <- eBayes(contrasts_fit)
+
+# Apply multiple testing correction and obtain stats
+stats_df <- topTable(contrasts_fit, number = nrow(rna)) %>%
+  tibble::rownames_to_column("Gene")
+
+# Let's extract the contrast p values for each and transform them with -log10()
+contrast_p_vals_df <- -log10(contrasts_fit$p.value) %>%
+  # Make this into a data frame
+  as.data.frame() %>%
+  # Store genes as their own column
+  tibble::rownames_to_column("Gene") %>%
+  # Make this into long format
+  tidyr::pivot_longer(dplyr::contains("vsOther"),
+                      names_to = "contrast",
+                      values_to = "neg_log10_p_val"
+  )
+
+# Let's extract the fold changes from `stats_df`
+log_fc_df <- stats_df %>%
+  # We only want to keep the `Gene` column as well
+  dplyr::select("Gene", dplyr::contains("vsOther")) %>%
+  # Make this a longer format
+  tidyr::pivot_longer(dplyr::contains("vsOther"),
+                      names_to = "contrast",
+                      values_to = "logFoldChange"
+  )
+
+plot_df <- log_fc_df %>%
+  dplyr::inner_join(contrast_p_vals_df,
+                    by = c("Gene", "contrast"),
+                    # This argument will add the given suffixes to the column names
+                    # from the respective data frames, helping us keep track of which columns
+                    # hold which types of values
+                    suffix = c("_log_fc", "_p_val")
+  )
+
+# Convert p value cutoff to negative log 10 scale
+p_val_cutoff <- -log10(0.05)
+
+# Absolute value cutoff for fold changes
+abs_fc_cutoff <- 0.25
+
+# Make volcano plot to visualize data
+
+plot_df <- plot_df %>%
+  dplyr::mutate(
+    signif_label = dplyr::case_when(
+      abs(logFoldChange) > abs_fc_cutoff & neg_log10_p_val > p_val_cutoff & logFoldChange > 0
+      ~ "Upregulated",
+      abs(logFoldChange) > abs_fc_cutoff & neg_log10_p_val > p_val_cutoff & logFoldChange < 0
+      ~ "Downregulated",
+      abs(logFoldChange) > abs_fc_cutoff ~ "Not Significant",
+      neg_log10_p_val > p_val_cutoff ~ "Not Significant",
+      TRUE ~ "Not Significant"
+    )
+  )
+
+plot_df$contrast[plot_df$contrast == "HRposHER2negvsOther"] <- "HR+/HER2- vs Rest"
+plot_df$contrast[plot_df$contrast == "HRposHER2posvsOther"] <- "HR+/HER2+ vs Rest"
+plot_df$contrast[plot_df$contrast == "HRnegHER2posvsOther"] <- "HR-/HER2+ vs Rest"
+plot_df$contrast[plot_df$contrast == "HRnegHER2negvsOther"] <- "HR-/HER2- vs Rest"
+```
+
+Plot top pathways for each subtype
+```{r}
+#get top 5 up and down regulated for each subtype
+
+top_fc <- data.frame()
+for (subtype in unique(plot_df$contrast)){
+  sub <- subset(plot_df, contrast == subtype)
+  sub <- sub[order(-sub$logFoldChange),]
+  sub2 <- subset(sub, logFoldChange > 0)
+  up <- sub2
+  if (nrow(up) > 5){
+    up <- sub2[1:5,]
+  }
+  up$Group <- "Upregulated"
+  up$Rank <- as.character(1:nrow(up))
+
+  for (i in 1:nrow(up)){
+    pv <- up$neg_log10_p_val[i]
+    sig <- NA
+    if (pv > -log10(0.05)){
+      sig <- "*"
+
+    if (pv > -log10(0.01)){
+      sig <- "**"
+    }
+    if (pv > -log10(0.001)){
+      sig <- "***"
+    }
+    up$Gene[i] <- paste0(up$Gene[i], " (", sig, ")")
+    }
+  }
+
+  sub <- sub[order(sub$logFoldChange),]
+  sub2 <- subset(sub, logFoldChange < 0)
+  down <- sub2
+  if (nrow(down) > 5){
+    down <- sub2[1:5,]
+  }
+  down$Rank <- as.character(1:nrow(down))
+  down$Group <- "Downregulated"
+
+  for (i in 1:nrow(down)){
+    pv <- down$neg_log10_p_val[i]
+    sig <- NA
+    if (pv > -log10(0.05)){
+      sig <- "*"
+
+    if (pv > -log10(0.01)){
+      sig <- "**"
+    }
+    if (pv > -log10(0.001)){
+      sig <- "***"
+    }
+    down$Gene[i] <- paste0("(", sig, ") ", down$Gene[i])
+    }
+  }
+
+  top_fc <- rbind(top_fc, up, down)
+}
+
+
+fc_plot <- ggplot(top_fc, aes(x = logFoldChange, y = Rank, fill = Group)) +
+  geom_bar(stat = "identity",
+           show.legend = FALSE, color = "black") +
+  facet_wrap(~contrast, ncol = 1, nrow = 4) +
+  scale_fill_manual(values = c(
+    "Downregulated" = pal[1],
+    "Upregulated" = pal[3])) +
+  geom_text(aes(label = Gene,
+                hjust = ifelse(logFoldChange < 0, 1 , 0),
+                vjust = 0.5),
+            size = 4) +
+  theme_classic() +
+  xlim(-0.1, 0.1) +
+  theme(axis.title.y = element_blank(), axis.text.y = element_blank(), axis.line.y = element_blank(),
+        axis.ticks.y = element_blank(), axis.text.x = element_text(size = 18),
+        axis.title.x = element_text(size = 20), strip.text = element_text(size = 20))
+fc_plot
+```
+
+Prepare data for ecotyper analysis
+```{r}
+## load gene expression data
+
+rna <- read.csv("rnaseq.csv")
+genes <- rna$X
+rna <- rna[,-1]
+rna <- data.frame(apply(rna, 2, as.numeric))
+#rna <- log2(rna + 0.0001)
+rownames(rna) <- genes
+colnames(rna) <- gsub("X.", "/", colnames(rna))
+
+## load annotation data
+
+clin <- read.csv("combined_clinical.csv")
+clin$ID <- toupper(clin$ID)
+
+clin <- clin[,c(16,9,3)]
+colnames(clin)[1] <- "ID"
+
+colnames(rna) <- gsub("[.]", "-", colnames(rna))
+#clin$ID <- gsub("[-]", "", clin$ID)
+#clin$ID <- paste0("PT", clin$ID)
+
+clin <- subset(clin, ID %in% colnames(rna))
+
+rna2 <- cbind(data.frame("Gene" = rownames(rna), rna))
+colnames(rna2) <- gsub("X.", "/", colnames(rna2))
+colnames(rna2) <- gsub("[.]", "-", colnames(rna2))
+clin <- unique(clin)
+rna2 <- rna2[,c("Gene", clin$ID)]
+
+clin$ID <- gsub("[^[:alnum:] ]", "", clin$ID)
+colnames(rna2) <- gsub("[^[:alnum:] ]", "", colnames(rna2))
+
+write.table(rna2, "ecotyper_rnaseq_FINAL.txt", sep = "\t", row.names = F)
+write.table(clin, "ecotyper_clinical_annotations_FINAL.txt", sep = "\t", row.names = F)
+```
+
+```{r}
+########
+# run in terminal
+# Rscript EcoTyper_recovery_bulk.R -d Carcinoma -m ../ecotyper_rnaseq_FINAL.txt -a ../ecotyper_clinical_annotations_FINAL.txt -c Subtype -o # RecoveryOutput_FINAL
+########
+```
+
+
+Plot cell state abundance comparisons
+```{r}
+### compare cell types by state
+
+
+annotations <- read.csv("~//Documents//COH Breast Cohort//state_annotations.csv")
+annotations <- annotations[-1,]
+
+celltypes <- c("B.cells", "CD4.T.cells", "CD8.T.cells", "Dendritic.cells", "Endothelial.cells", "Epithelial.cells",
+               "Fibroblasts", "Mast.cells", "Monocytes.and.Macrophages", "PMNs", "NK.cells", "PCs")
+celltypes_labels <- unique(annotations$Cell.type)
+
+subtypes <- c("HR+/HER2-", "HR+/HER2+", "HR-/HER2+", "HR-/HER2-")
+
+sa_df <- data.frame()
+for (i in 1:length(celltypes)){
+  celltype <- celltypes[i]
+  celltype_label <- celltypes_labels[i]
+
+  state_abundance <- read.delim(paste0("~//Documents//ecotyper//RecoveryOutput_FINAL//ecotyper_rnaseq_FINAL//",
+                                       celltype, "//state_abundances.txt"), sep = "\t")
+  state_abundance <- state_abundance[,clin$ID]
+
+  anno = subset(annotations, Cell.type == celltype_label)
+
+  for (subtype in subtypes){
+    sub <- subset(clin, Subtype == subtype)
+    is_subtype <- sub$ID
+    is_subtype <- state_abundance[,is_subtype]
+
+    for (state in unique(anno$Cell.state)){
+      is_subtype_state <- as.numeric(is_subtype[state,])
+      state_des <- subset(anno, Cell.state == state)$Cell.state.annotation
+
+      rows <- data.frame("State_Abundance" = c(is_subtype_state),
+                         "Subtype" = subtype,
+                         "Cell_State" = state_des,
+                         "Cell_Type" = celltype_label)
+      sa_df <- rbind(sa_df, rows)
+    }
+  }
+
+}
+
+pal <- pal_observable("observable10", alpha = 0.9)(10)
+
+
+sa_df <- sa_df %>%
+  group_by(Cell_State, Cell_Type) %>%
+  mutate(
+    rel_abundance = State_Abundance / sum(State_Abundance),
+    log2_rel_abundance = log10(rel_abundance)
+  )
+
+
+sa_df$log2_state_abundance <- log2(sa_df$State_Abundance)
+
+
+library(ggpubr)
+library(ggplot2)
+sa_df$Subtype <- as.factor(sa_df$Subtype)
+plot_list <- list()
+for (i in 1:length(unique(sa_df$Cell_Type))){
+  celltype <- unique(sa_df$Cell_Type)[i]
+  sa_df_sub <- subset(sa_df, Cell_Type == celltype)
+  plot <- ggplot(sa_df_sub, aes(x = Subtype, fill = Subtype, y = State_Abundance)) +
+    geom_violin(width=1, position = position_dodge(1), trim = FALSE) +
+    geom_boxplot(width=0.25, color="white", alpha=0.2, position = position_dodge(1), outlier.shape = NA) +
+    theme_classic() +
+    scale_fill_manual(values = c("HR+/HER2-" = pal[4],
+                                "HR+/HER2+" = pal[3],
+                                "HR-/HER2+" = pal[2],
+                                "HR-/HER2-" = pal[1])) +
+    ggtitle(celltype) +
+    facet_wrap(~Cell_State) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1), plot.title = element_text(hjust = 0.5, vjust = 0.5)) +
+    stat_compare_means(comparisons = list(c("HR+/HER2-", "HR+/HER2+"),
+                                          c("HR+/HER2-", "HR-/HER2+"),
+                                          c("HR+/HER2-", "HR-/HER2-"),
+                                          c("HR+/HER2+", "HR-/HER2+"),
+                                          c("HR+/HER2+", "HR-/HER2-"),
+                                          c("HR-/HER2+", "HR-/HER2-")), hide.ns = F, label = "p.signif")
+
+  plot_list[[i]] <- plot
+}
+
+ggarrange(plotlist = plot_list, nrow = length(plot_list), common.legend = TRUE)
+
+```
+
+Plot select cell states for manuscript (Figure 2e, Supplementary Figure)
+
+```{r}
+types <- c("CD4 T cells", "CD8 T cells", "Dendritic cells", "Dendritic cells", "Dendritic cells", "Monocytes/Macrophages")
+states <- c("Exhausted/effector memory/Treg (S01)", "Exhausted/effector memory (S03)", "Migratory activated (S07)", "Myeloid cDC1 (S01)",
+            "Myeloid cDC2-B (Inflammatory) (S02)", "M2-like proliferative (S07)")
+
+new_data <- data.frame()
+for (i in 1:length(states)){
+  sub <- subset(sa_df, Cell_Type == types[i] & Cell_State == states[i])
+  sub$Label <- paste0(types[i], ": ", states[i])
+  new_data <- rbind(new_data, sub)
+}
+
+new_data$Label[new_data$Label == "Monocytes/Macrophages: M2-like proliferative (S07)"] <- "Macrophages: M2-like proliferative (S07)"
+
+
+immune_plot <- ggplot(new_data, aes(x = Subtype, fill = Subtype, y = log2_rel_abundance)) +
+  geom_violin(width=1, position = position_dodge(1), trim = FALSE, color = NA,
+              draw_quantiles = c(0.5), quantile.color = "white", quantile.linetype = 0) +
+  #geom_boxplot(aes(color = Subtype), width=0.75, fill = "white", position = position_dodge(1)) +
+  theme_classic() +
+  ylab("State Abundance") +
+  scale_fill_manual(values = c("HR+/HER2-" = pal[4],
+                               "HR+/HER2+" = pal[3],
+                               "HR-/HER2+" = pal[2],
+                               "HR-/HER2-" = pal[1])) +
+  theme(plot.title = element_text(hjust = 0.5, vjust = 0.5),
+        axis.title.y = element_text(size = 16), axis.text.y = element_text(size = 14), strip.text = element_text(size = 10),
+        legend.title = element_text(size = 16), legend.text = element_text(size = 14), axis.text.x = element_blank(),
+        axis.title.x = element_blank(), axis.ticks.x = element_blank()) +
+  stat_compare_means(comparisons = list(c("HR+/HER2-", "HR+/HER2+"),
+                                        c("HR+/HER2-", "HR-/HER2+"),
+                                        c("HR+/HER2-", "HR-/HER2-"),
+                                        c("HR+/HER2+", "HR-/HER2+"),
+                                        c("HR+/HER2+", "HR-/HER2-"),
+                                        c("HR-/HER2+", "HR-/HER2-")), hide.ns = T, label = "p.signif", tip.length = 0) +
+  facet_wrap(~Label, nrow = 3, ncol = 2, scale = "free_y")
+
+immune_plot
+
+
+
+
+types <- c("Endothelial cells","Epithelial cells", "Epithelial cells", "Epithelial cells", "Epithelial cells", "Fibroblasts")
+states <- c("Tumor-associated/tip cells (S02)","Basal-like (S01)", "Metabolic (S06)", "Pro-angiogenic (S03)", "Pro-inflammatory (S04)", "Pro-migratory-like (S08)")
+
+new_data <- data.frame()
+for (i in 1:length(states)){
+  sub <- subset(sa_df, Cell_Type == types[i] & Cell_State == states[i])
+  sub$Label <- paste0(types[i], ": ", states[i])
+  new_data <- rbind(new_data, sub)
+}
+
+
+stromal_plot <- ggplot(new_data, aes(x = Subtype, fill = Subtype, y = log2_rel_abundance)) +
+  geom_violin(width=1, position = position_dodge(1), trim = FALSE, color = NA,
+              draw_quantiles = c(0.5), quantile.color = "white", quantile.linetype = 0) +
+  #geom_boxplot(aes(color = Subtype), width=0.75, fill = "white", position = position_dodge(1)) +
+  theme_classic() +
+  ylab("State Abundance") +
+  scale_fill_manual(values = c("HR+/HER2-" = pal[4],
+                               "HR+/HER2+" = pal[3],
+                               "HR-/HER2+" = pal[2],
+                               "HR-/HER2-" = pal[1])) +
+  theme(plot.title = element_text(hjust = 0.5, vjust = 0.5),
+        axis.title.y = element_text(size = 16), axis.text.y = element_text(size = 14), strip.text = element_text(size = 10),
+        legend.title = element_text(size = 16), legend.text = element_text(size = 14), axis.text.x = element_blank(),
+        axis.title.x = element_blank(), axis.ticks.x = element_blank()) +
+  stat_compare_means(comparisons = list(c("HR+/HER2-", "HR+/HER2+"),
+                                        c("HR+/HER2-", "HR-/HER2+"),
+                                        c("HR+/HER2-", "HR-/HER2-"),
+                                        c("HR+/HER2+", "HR-/HER2+"),
+                                        c("HR+/HER2+", "HR-/HER2-"),
+                                        c("HR-/HER2+", "HR-/HER2-")), hide.ns = T, label = "p.signif", tip.length = 0) +
+  facet_wrap(~Label, nrow = 3, ncol = 2, scale = "free_y")
+
+stromal_plot
+
+ggpubr::ggarrange(immune_plot, stromal_plot, ncol = 2, nrow = 1, align = "hv", common.legend = T)
+```
+
+
+Compare ecotypes across subtypes
+```{r}
+ecotypes <- read.delim("~//Ecotypes//ecotype_assignment.txt", sep = "\t")
+
+rearrange_data <- function(state, data){
+  rows <- data.frame()
+  for (subtype in unique(data$Subtype)){
+    sub <- subset(data, Subtype == subtype & MaxEcotype == state)
+    perc <- round((nrow(sub) / nrow(subset(data, Subtype == subtype)) * 100), digits = 1)
+    perc <- paste0(perc, "%")
+    if (nrow(sub) == 0){perc = NA}
+    row <- data.frame("Ecotype" = state, "Count" = nrow(sub), "Subtype" = subtype, "Percentage" = perc)
+    rows <- rbind(rows, row)
+  }
+  return(rows)
+}
+
+eco_df <- na.omit(dplyr::bind_rows(lapply(unique(ecotypes$MaxEcotype), rearrange_data, data = ecotypes)))
+
+eco_df$Subtype <- factor(eco_df$Subtype, levels = c("HR+/HER2-", "HR+/HER2+", "HR-/HER2+", "HR-/HER2-"))
+eco_df$Ecotype <- factor(eco_df$Ecotype, levels = c("CE1", "CE2", "CE3", "CE4", "CE5", "CE6", "CE7", "CE8", "CE9", "CE10"))
+
+p1 <- c("#9E4058FF", "#C2697FFF", "#D0641EFF", "#E68E54FF", "#FBC559FF",  "#7FC269FF", "#2C3778FF", "#4151B0FF","#513965FF", "#785596FF")
+
+
+eco_plot <- ggplot(eco_df, aes(x = Subtype, y = Count, fill = Ecotype)) +
+  geom_bar(position = "fill", stat = "identity", color = "black") +
+  theme_classic() +
+  ylab("Proportion of Patients") +
+  scale_fill_manual(values = c("CE1" = p1[1],
+                               "CE2" = p1[2],
+                               "CE3" = p1[3],
+                               "CE4" = p1[4],
+                               "CE5" = p1[5],
+                               "CE6" = p1[6],
+                               "CE7" = p1[7],
+                               "CE8" = p1[8],
+                               "CE9" = p1[9],
+                               "CE10" = p1[10])) +
+  geom_text(aes(label = Percentage), size = 5, position = position_fill(vjust = 0.5)) +
+  theme(axis.text = element_text(size = 16), axis.title = element_text(size = 16), legend.text = element_text(size = 14),
+        legend.title = element_text(size = 14), axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1))
+eco_plot
+
+```
+

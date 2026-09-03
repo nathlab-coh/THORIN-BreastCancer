@@ -1,0 +1,932 @@
+---
+title: "COH Breast Cohort (Figure 1)"
+author: "S. Grant"
+date: "2025-08-11"
+output: html_document
+---
+
+Palettes
+```{r}
+p1_light <- c("#C2697FFF",  "#E68E54FF", "#FBC559FF","#7FC269FF", "#4151B0FF", "#785596FF")
+
+p1_dark <- c("#9E4058FF", "#D0641EFF","#F9AB0EFF", "#589E40FF",  "#2C3778FF", "#513965FF")
+
+p1_three <- c("#C2697FFF",  "#FBC559FF", "#4151B0FF")
+
+p1_five <- c("#C2697FFF",  "#FBC559FF",  "#7FC269FF", "#4151B0FF",  "#785596FF")
+```
+
+
+```{r}
+library(readxl)
+library(ggpubr)
+library(ggplot2)
+library(survival)
+library(survminer)
+library(ggrepel)
+library(dplyr)
+library(paletteer)
+```
+Retrieve testing timepoints
+```{r}
+cr_tests <- read_excel("~//Documents//COH Breast Cohort//HB-1646_BreastCaCohort_v5.xlsx", sheet = "CR_Tests")
+cr_tests2 <- read_excel("~//Documents//COH Breast Cohort//HB-1984_CR_PCDM_specimenID.xlsx", sheet = " CR_Tests ")
+
+colnames(cr_tests) <- cr_tests[1,]
+cr_tests <- cr_tests[-1,]
+
+cr_tests <- subset(cr_tests, genetic_test %in% c("ashion", "Guardant", "Tempus"))
+
+pcdm_tests <- read_excel("~//Documents//COH Breast Cohort//HB-1646_BreastCaCohort_v5.xlsx", sheet = "PCDM_Tests")
+pcdm_tests2 <- read_excel("~//Documents//COH Breast Cohort//HB-1984_CR_PCDM_specimenID.xlsx", sheet = "PCDM_Test")
+
+colnames(pcdm_tests) <- pcdm_tests[1,]
+pcdm_tests <- pcdm_tests[-1,]
+
+pcdm_tests <- subset(pcdm_tests, genetic_test %in% c("ashion", "Guardant", "Tempus"))
+```
+Retrieve clinical variables and data to calculate overall survival
+```{r}
+# AGE & OS
+pcdm_cohort <- read_excel("~//Documents//COH Breast Cohort//HB-1646_BreastCaCohort_v5.xlsx", sheet = "PCDM_Cohort")
+cr_cohort <- read_excel("~//Documents//COH Breast Cohort//HB-1646_BreastCaCohort_v5.xlsx", sheet = "CR_Cohort")
+
+colnames(pcdm_cohort) <- pcdm_cohort[1,]
+pcdm_cohort <- pcdm_cohort[-1,]
+
+colnames(cr_cohort) <- cr_cohort[1,]
+cr_cohort <- cr_cohort[-1,]
+
+pcdm_cohort <- pcdm_cohort[,c(1,5:6)]
+cr_cohort <- cr_cohort[,c(1,4:7)]
+cr_cohort <- unique(cr_cohort)
+
+# STAGE
+pcdm_stage <- read_excel("~//Documents//COH Breast Cohort//HB-1646_BreastCaCohort_v5.xlsx", sheet = "PCDM_Stage")
+cr_stage <- read_excel("~//Documents//COH Breast Cohort//HB-1646_BreastCaCohort_v5.xlsx", sheet = "CR_Stage")
+
+colnames(pcdm_stage) <- pcdm_stage[1,]
+pcdm_stage <- pcdm_stage[-1,]
+
+colnames(cr_stage) <- cr_stage[1,]
+cr_stage <- cr_stage[-1,]
+
+pcdm_stage <- merge(pcdm_stage, pcdm_cohort, by = "UUID")
+pcdm_stage <- unique(pcdm_stage)
+
+pcdm_stage$days_Dx_to_stage <- as.numeric(pcdm_stage$days_Dx_to_stage)
+pcdm_stage$days_Dx_to_Death <- as.numeric(pcdm_stage$days_Dx_to_Death)
+pcdm_stage$days_Dx_to_LastAppt <- as.numeric(pcdm_stage$days_Dx_to_LastAppt)
+pcdm_stage$stage[pcdm_stage$stage == "NULL"] <- "Stage Unknown"
+```
+
+Clean up stage - keep most recently updated staging information
+```{r}
+pcdm_keep <- data.frame()
+for (patient in unique(pcdm_stage$UUID)){
+  sub <- subset(pcdm_stage, UUID == patient)
+  sub2 <- subset(sub, stage != "Stage Unknown" & stage != "No Stage Recommended")
+  if (nrow(sub2) > 0){
+    keep_row <- sub2[which.max(abs(sub2$days_Dx_to_stage)),]
+  }
+  if (nrow(sub2) == 0){
+    keep_row <- sub[which.max(abs(sub$days_Dx_to_stage)),]
+  }
+  pcdm_keep <- rbind(pcdm_keep, keep_row)
+}
+
+cr_keep_cohort <- subset(cr_cohort, diagnosis_day == 0)
+cr_keep <- data.frame()
+for (patient in unique(cr_stage$UUID)){
+  sub <- subset(cr_stage, UUID == patient)
+  sub2 <- subset(sub, Stage != "Stage Unknown")
+  sub2$Stage <- sort(sub2$Stage)
+  if (nrow(sub2) > 0){
+    keep_row <- sub2[nrow(sub2),]
+  }
+  if (nrow(sub2) == 0){
+    keep_row <- sub[nrow(sub),]
+  }
+  cr_keep <- rbind(cr_keep, keep_row)
+}
+
+cr_keep <- merge(cr_keep, cr_keep_cohort, by = "UUID")
+```
+
+Clean dataframes - remove unnecessary columns
+```{r}
+cr_keep <- cr_keep[,c("UUID", "Stage", "ER", "PR", "HER2", "age_diagnosis", "days_Dx_to_Death", "days_Dx_to_LastAppt")]
+pcdm_keep <- pcdm_keep[,c("UUID", "age_at_stage", "stage", "erStatus", "prStatus", "her2Status", "days_Dx_to_Death", "days_Dx_to_LastAppt")]
+
+colnames(cr_keep) <- c("UUID", "Stage", "ER", "PR", "HER2", "Age", "OS_Event", "OS_Time")
+colnames(pcdm_keep) <- c("UUID", "Age", "Stage", "ER", "PR", "HER2", "OS_Event", "OS_Time")
+```
+
+Clean up staging and subtype labels
+```{r}
+pcdm_keep$Stage[pcdm_keep$Stage == "Stage IIIB"] <- "Stage III"
+pcdm_keep$Stage[pcdm_keep$Stage == "Stage IIB"] <- "Stage II"
+pcdm_keep$Stage[pcdm_keep$Stage == "Stage IB"] <- "Stage I"
+pcdm_keep$Stage[pcdm_keep$Stage == "Stage IA"] <- "Stage I"
+pcdm_keep$Stage[pcdm_keep$Stage == "Stage IIA"] <- "Stage II"
+pcdm_keep$Stage[pcdm_keep$Stage == "Stage IIIA"] <- "Stage III"
+pcdm_keep$Stage[pcdm_keep$Stage == "Stage IIIC"] <- "Stage III"
+pcdm_keep$Stage[pcdm_keep$Stage == "No Stage Recommended"] <- "Not Reported"
+
+cr_keep$Stage[cr_keep$Stage == "Stage 1"] <- "Stage I"
+cr_keep$Stage[cr_keep$Stage == "Stage 2"] <- "Stage II"
+cr_keep$Stage[cr_keep$Stage == "Stage 3"] <- "Stage III"
+cr_keep$Stage[cr_keep$Stage == "Stage 4"] <- "Stage IV"
+cr_keep$Stage[cr_keep$Stage == "No Stage Recommended"] <- "Not Reported"
+
+pcdm_keep$ER[pcdm_keep$ER == "NULL" | pcdm_keep$ER == "Not assessed"] <- NA
+pcdm_keep$PR[pcdm_keep$PR == "NULL" | pcdm_keep$PR == "Not assessed"] <- NA
+pcdm_keep$HER2[pcdm_keep$HER2 == "NULL" | pcdm_keep$HER2 == "Not assessed" | pcdm_keep$HER2 == "Indeterminate/Borderline"] <- NA
+
+pcdm_keep$Subtype <- NA
+pcdm_keep$Subtype[pcdm_keep$ER == "Positive" & pcdm_keep$HER2 == "Negative"] <- "HR+/HER2-"
+pcdm_keep$Subtype[pcdm_keep$PR == "Positive" & pcdm_keep$HER2 == "Negative"] <- "HR+/HER2-"
+pcdm_keep$Subtype[pcdm_keep$ER == "Positive" & pcdm_keep$HER2 == "Positive"] <- "HR+/HER2+"
+pcdm_keep$Subtype[pcdm_keep$PR == "Positive" & pcdm_keep$HER2 == "Positive"] <- "HR+/HER2+"
+pcdm_keep$Subtype[pcdm_keep$PR == "Negative" & pcdm_keep$ER == "Negative" & pcdm_keep$HER2 == "Positive"] <- "HR-/HER2+"
+pcdm_keep$Subtype[pcdm_keep$ER == "Negative" & pcdm_keep$HER2 == "Negative" & pcdm_keep$PR == "Negative"] <- "HR-/HER2-"
+
+cr_keep$ER[cr_keep$ER == "NULL"] <- NA
+cr_keep$PR[cr_keep$PR == "NULL"] <- NA
+cr_keep$HER2[cr_keep$HER2 == "NULL"] <- NA
+
+cr_keep$Subtype <- NA
+cr_keep$Subtype[cr_keep$ER == "Positive" & cr_keep$HER2 == "Negative"] <- "HR+/HER2-"
+cr_keep$Subtype[cr_keep$PR == "Positive" & cr_keep$HER2 == "Negative"] <- "HR+/HER2-"
+cr_keep$Subtype[cr_keep$ER == "Positive" & cr_keep$HER2 == "Positive"] <- "HR+/HER2+"
+cr_keep$Subtype[cr_keep$PR == "Positive" & cr_keep$HER2 == "Positive"] <- "HR+/HER2+"
+cr_keep$Subtype[cr_keep$PR == "Negative" & cr_keep$ER == "Negative" & cr_keep$HER2 == "Positive"] <- "HR-/HER2+"
+cr_keep$Subtype[cr_keep$ER == "Negative" & cr_keep$HER2 == "Negative" & cr_keep$PR == "Negative"] <- "HR-/HER2-"
+```
+
+Calculate overall survival information
+```{r}
+event <- c()
+time <- c()
+for (i in 1:nrow(pcdm_keep)){
+  if (is.na(pcdm_keep$OS_Event)[i] == TRUE){
+    event <- c(event, 0)
+    time <- c(time, pcdm_keep$OS_Time[i])
+  }
+  if (is.na(pcdm_keep$OS_Event)[i] == FALSE){
+    event <- c(event, 1)
+    time <- c(time, pcdm_keep$OS_Event[i])
+  }  
+}
+pcdm_keep$OS_Event <- unlist(event)
+pcdm_keep$OS_Time <- unlist(time)
+
+event <- c()
+time <- c()
+for (i in 1:nrow(cr_keep)){
+  if (cr_keep$OS_Event[i] == "NULL"){
+    event <- c(event, 0)
+    time <- c(time, cr_keep$OS_Time[i])
+  }
+  if (cr_keep$OS_Event[i] != "NULL"){
+    event <- c(event, 1)
+    time <- c(time, cr_keep$OS_Event[i])
+  }  
+}
+cr_keep$OS_Event <- unlist(event)
+cr_keep$OS_Time <- unlist(time)
+```
+
+Load and clean treatment history data with grouped labels
+```{r}
+pcdm_med <- read_excel("~//Documents//COH Breast Cohort//HB-1646_BreastCaCohort_v5.xlsx", sheet = "PCDM_Meds")
+cr_med <- read_excel("~//Documents//COH Breast Cohort//HB-1646_BreastCaCohort_v5.xlsx", sheet = "CR_Meds")
+
+colnames(pcdm_med) <- pcdm_med[1,]
+pcdm_med <- pcdm_med[-1,]
+
+colnames(cr_med) <- cr_med[1,]
+cr_med <- cr_med[-1,]
+
+drug_list <- read.csv("MedClass_updated_V3_20250604.csv")
+drug_list$Drug_Classification_V4[drug_list$Merged_med_name == "Trastuzumab Deruxtecan"] <- "HER2_ERBB_Inhibitor (ADC)"
+drug_list <- drug_list[,-c(1,2)]
+colnames(drug_list)[2] <- "med_name"
+
+pcdm_med <- merge(pcdm_med[,1:3], drug_list[,c(2,5)], by = "med_name")
+cr_med <- merge(cr_med[,1:3], drug_list[,c(2,5)], by = "med_name")
+```
+
+
+```{r}
+cr_tempus <- read_excel("~//Documents//COH Breast Cohort//HB-1984-CR-updated.xlsx", sheet = "Tempus")
+cr_tempus <- subset(cr_tempus, significance != "RNA") # remove RNA biomarkers from Tempus assays
+cr_guardant <- read_excel("~//Documents//COH Breast Cohort//HB-1984-CR-updated.xlsx", sheet = "Guardant")
+cr_ashion <- read_excel("~//Documents//COH Breast Cohort//HB-1984-CR-updated.xlsx", sheet = "GemExtra")
+
+cr_samples <- unique(c(cr_tempus$accessionNumber, cr_guardant$accessionNumber, cr_ashion$specimenNumber))
+```
+
+Assess combination of sequencing tests available per patient
+```{r}
+pcdm_tests <- subset(pcdm_tests2, source %in% c("ashion", "Guardant", "Tempus", "Fulgent", "Invitae"))
+colnames(pcdm_tests)[2] <- "genetic_test"
+pcdm_tests$genetic_test[pcdm_tests$genetic_test == "ashion"] <- "Ashion"
+
+ful <- c()
+inv <- c()
+temp <- c()
+ash <- c()
+guard <- c()
+for (u in unique(pcdm_tests$uuid)){
+  sub <- subset(pcdm_tests, uuid == u)
+  if ("Fulgent" %in% sub$genetic_test){ful <- c(ful, "Yes")}
+  else{ful <- c(ful, "No")}
+  if ("Invitae" %in% sub$genetic_test){inv <- c(inv, "Yes")}
+  else{inv <- c(inv, "No")}
+  if ("Tempus" %in% sub$genetic_test){temp <- c(temp, "Yes")}
+  else{temp <- c(temp, "No")}
+  if ("Ashion" %in% sub$genetic_test){ash <- c(ash, "Yes")}
+  else{ash <- c(ash, "No")}
+  if ("Guardant" %in% sub$genetic_test){guard <- c(guard, "Yes")}
+  else{guard <- c(guard, "No")}
+}
+
+tests <- data.frame("UUID" = unique(pcdm_tests$uuid), "Fulgent" = unlist(ful), "Invitae" = unlist(inv), "Tempus" = unlist(temp), "Ashion" = unlist(ash), "Guardant" = unlist(guard))
+
+pcdm_keep <- subset(pcdm_keep, UUID %in% tests$UUID)
+pcdm_keep <- merge(pcdm_keep, tests, by = "UUID")
+```
+
+Remove patients that do not have somatic sequencing data available
+```{r}
+colnames(cr_tests2)[2] <- "genetic_test"
+cr_tests <- subset(cr_tests2, genetic_test %in% c("Fulgent", "Invitae", "Tempus", "ashion", "Guardant"))
+cr_tests$genetic_test[cr_tests$genetic_test == "ashion"] <- "Ashion"
+
+ful <- c()
+inv <- c()
+temp <- c()
+ash <- c()
+guard <- c()
+for (u in unique(cr_tests$uuid)){
+  sub <- subset(cr_tests, uuid == u)
+  if ("Fulgent" %in% sub$genetic_test){ful <- c(ful, "Yes")}
+  else{ful <- c(ful, "No")}
+  if ("Invitae" %in% sub$genetic_test){inv <- c(inv, "Yes")}
+  else{inv <- c(inv, "No")}
+  if ("Tempus" %in% sub$genetic_test){temp <- c(temp, "Yes")}
+  else{temp <- c(temp, "No")}
+  if ("Ashion" %in% sub$genetic_test){ash <- c(ash, "Yes")}
+  else{ash <- c(ash, "No")}
+  if ("Guardant" %in% sub$genetic_test){guard <- c(guard, "Yes")}
+  else{guard <- c(guard, "No")}
+}
+
+tests <- data.frame("UUID" = unique(cr_tests$uuid), "Fulgent" = unlist(ful), "Invitae" = unlist(inv), "Tempus" = unlist(temp), "Ashion" = unlist(ash), "Guardant" = unlist(guard))
+
+cr_keep <- subset(cr_keep, UUID %in% tests$UUID)
+cr_keep <- merge(cr_keep, tests, by = "UUID")
+```
+
+```{r}
+all_data <- rbind(pcdm_keep, cr_keep)
+all_data <- subset(all_data, Tempus == "Yes" | Ashion == "Yes" | Guardant == "Yes")
+
+all_data$Stage[all_data$Stage == "Stage Unknown"] <- "Not Reported"
+```
+
+Plot stage (Figure 1a)
+```{r}
+stage_df <- data.frame(table(all_data$Stage))
+colnames(stage_df) <- c("Stage", "Count")
+stage_df$Fraction <- (stage_df$Count / sum(stage_df$Count))*100
+
+# Compute the cumulative percentages (top of each rectangle)
+stage_df$ymax <- cumsum(stage_df$Fraction)
+
+# Compute the bottom of each rectangle
+stage_df$ymin <- c(0, head(stage_df$ymax, n=-1))
+
+# Compute label position
+stage_df$labelPosition <- (stage_df$ymax + stage_df$ymin) /2
+
+# Compute a good label
+stage_df$label <- paste0(stage_df$Stage, "\n n = ", stage_df$Count)
+```
+
+```{r}
+# Get the positions
+stage_df2 <- stage_df %>% 
+  mutate(csum = rev(cumsum(rev(Count))), 
+         pos = Count/2 + lead(csum, 1),
+         pos = if_else(is.na(pos), Count/2, pos))
+```
+
+
+```{r}
+stage_plot <- ggplot(stage_df, aes(x = "", y = Count, fill=Stage)) +
+  geom_col(width = 1, color = NA, alpha = 0.9) +
+  coord_polar(theta = "y") +
+  scale_fill_observable()+
+  geom_text_repel(data = stage_df2,
+                 aes(y = pos, label = label),
+                size = 5, nudge_x = 0.85, show.legend = FALSE, fill = NA,
+                segment.color = NA)+
+  theme_void() +
+  theme(legend.position = "none")
+stage_plot
+```
+
+Plot subtype (Figure 1b)
+```{r}
+subtype_df <- data.frame(table(all_data$Subtype))
+colnames(subtype_df) <- c("Subtype", "Count")
+subtype_df$Fraction <- (subtype_df$Count / sum(subtype_df$Count))*100
+
+# Compute the cumulative percentages (top of each rectangle)
+subtype_df$ymax <- cumsum(subtype_df$Fraction)
+
+# Compute the bottom of each rectangle
+subtype_df$ymin <- c(0, head(subtype_df$ymax, n=-1))
+
+# Compute label position
+subtype_df$labelPosition <- (subtype_df$ymax + subtype_df$ymin) /2
+
+# Compute a good label
+subtype_df$label <- paste0(subtype_df$Subtype, "\n n = ", subtype_df$Count)
+```
+
+```{r}
+# Get the positions
+subtype_df2 <- subtype_df %>% 
+  mutate(csum = rev(cumsum(rev(Count))), 
+         pos = Count/2 + lead(csum, 1),
+         pos = if_else(is.na(pos), Count/2, pos))
+```
+
+
+```{r}
+subtype_plot <- ggplot(subtype_df, aes(x = "", y = Count, fill=Subtype)) +
+  geom_col(width = 1, color = NA, alpha = 0.9) +
+  coord_polar(theta = "y") +
+  scale_fill_observable()+
+  geom_text_repel(data = subtype_df2,
+                 aes(y = pos, label = label),
+                size = 5, nudge_x = 0.85, show.legend = FALSE, fill = NA,
+                segment.color = NA)+
+  theme_void() +
+  theme(legend.position = "none")
+subtype_plot
+```
+
+
+```{r}
+subtype_df <- data.frame("Stage" = all_data$Stage, "Subtype" = unlist(all_data$Subtype))
+subtype_df$Subtype[is.na(subtype_df$Subtype) == T] <- "Not Reported"
+```
+
+```{r}
+subtype_df2 <- rbind(data.frame(table(subset(subtype_df, Stage == "Stage 0")$Subtype)),
+                     data.frame(table(subset(subtype_df, Stage == "Stage I")$Subtype)),
+                     data.frame(table(subset(subtype_df, Stage == "Stage II")$Subtype)),
+                     data.frame(table(subset(subtype_df, Stage == "Stage III")$Subtype)),
+                     data.frame(table(subset(subtype_df, Stage == "Stage IV")$Subtype)),
+                     data.frame(table(subset(subtype_df, Stage == "Not Reported")$Subtype)))
+
+subtype_df2$Stage <- c(rep("0", 2), rep("I", 5), rep("II", 5), rep("III", 5), rep("IV", 5),
+                       rep("Not Reported", 5))
+
+colnames(subtype_df2) <- c("Subtype", "Count", "Stage")
+```
+
+```{r}
+pal <- pal_observable("observable10")(10)
+```
+
+Figure 1c
+```{r}
+subtype_df2$Subtype <- factor(subtype_df2$Subtype, levels = c("Not Reported","HR+/HER2-", "HR+/HER2+", "HR-/HER2+", "HR-/HER2-"))
+subtype_df2$Stage <- factor(subtype_df2$Stage, levels = c("Not Reported", "0", "I", "II", "III", "IV"))
+subtype_df2$Count[subtype_df2$Count < 10] <- NA
+
+subtype_plot <- ggplot(subtype_df2, aes(x = Subtype, y = Count, fill = Stage)) +
+  geom_bar(position = "fill", stat = "identity", color = NA, alpha = 0.9) +
+  theme_classic() +
+  ylab("Proportion of Patients") +
+  #scale_fill_manual(values = c("0" = p1_light[1], "I" = p1_light[2], "II" = p1_light[3], "III" = p1_light[4], "IV" = p1_light[5],
+   #                                                "Not Reported" = "white")) +
+  geom_text(aes(label = Count), size = 6, position = position_fill(vjust = 0.5)) +
+  scale_fill_observable()+
+  theme(axis.text = element_text(size = 16), axis.title = element_text(size = 16), legend.text = element_text(size = 14),
+        legend.title = element_text(size = 14),
+        axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1))
+subtype_plot
+```
+
+Upset plots for combinations of patients (Supplementary Figure)
+```{r}
+tests2 <- subset(all_data, Subtype == "HR-/HER2-")[,c(11:15)]
+combo <- function(i, data){
+  comb <- paste0(data[i,], collapse = "_")
+  return(comb)
+}
+tests2$Combination <- unlist(lapply(1:nrow(tests2), combo, data = tests2))
+
+combo <- as.data.frame(table(tests2$Combination))
+combo <- combo[order(-combo$Freq),]
+combo$Var1 <- factor(combo$Var1, levels = combo$Var1)
+
+dat2 <- unique(tests2)
+
+restructure_df <- function(comb, data){
+  sub <- subset(data, Combination == comb)
+  genes <- c()
+  if (sub$Ashion == "Yes"){genes <- c(genes, "Ashion")}
+  if (sub$Guardant == "Yes"){genes <- c(genes, "Guardant")}
+  if (sub$Tempus == "Yes"){genes <- c(genes, "Tempus")}
+
+  rows <- data.frame("Combination"  = comb, "Test" = genes)
+  return(rows)
+}
+
+dat3 <- dplyr::bind_rows(lapply(dat2$Combination, restructure_df, data = dat2))
+colnames(combo)[1] <- "Combination"
+combo <- merge(combo, dat3, by = "Combination")
+combo$Test <- factor(combo$Test, levels = rev(c("Ashion", "Guardant", "Tempus")))
+combo$Type <- "Somatic Mutations"
+```
+
+
+```{r}
+bar <- ggplot(combo, aes(x = Combination, y = Freq)) +
+  geom_bar(stat = "identity", position = "dodge", color = NA, fill = pal[1], alpha = 0.9) +
+  theme_classic() +
+  xlab(NULL) +
+  ylab("Number of Patients") +
+  ggtitle("HR-/HER2-") +
+  theme(axis.text.x = element_blank(), panel.grid.major.x = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        axis.text.y = element_text(size = 14), axis.title.y = element_text(size = 14), plot.title = element_text(hjust = 0.1, vjust = 0.5, size = 16)) 
+
+point <- ggplot(combo, aes(x = Combination, y = Test)) +
+  geom_point(size = 3, color = pal[1], alpha = 0.9) +
+  geom_line(aes(group = Combination), color = pal[1], alpha = 0.9) +
+  xlab(NULL) +
+  theme_minimal()+
+  theme(axis.text.x = element_blank(), panel.grid.major.x = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        axis.text.y = element_text(size = 14), axis.title.y = element_text(size = 14)) 
+
+hrnegher2pos_upset <- ggarrange(bar, point, ncol = 1, nrow = 2, align = "v", heights = c(1,2))
+hrnegher2pos_upset
+```
+
+Heatmap for treatments before and after genomic test (Figure 1d-e)
+```{r}
+pcdm_med <- subset(pcdm_med, UUID %in% all_data$UUID)
+cr_med <- subset(cr_med, UUID %in% all_data$UUID)
+comb_med <- rbind(pcdm_med, cr_med)
+comb_tests <- rbind(pcdm_tests, cr_tests)
+colnames(comb_tests)[1] <- "UUID"
+
+comb_med2 <- data.frame()
+for (pt in unique(comb_tests$`specimenID/accessionID`)){
+    sub <- subset(comb_tests, `specimenID/accessionID` == pt & genetic_test %in% c("Ashion", "Guardant", "Tempus"))
+    sub_meds <- subset(comb_med, UUID == sub$UUID[1])
+    if (nrow(sub_meds) > 0){
+    test_day <- sub$days_since_first_dx[1]
+    rel_test <- as.numeric(sub_meds$days_Dx_to_Med) - as.numeric(test_day)
+    sub_meds$Rel_Test <- rel_test
+    sub_meds$Test_ID <- pt
+    comb_med2 <- rbind(comb_med2, sub_meds)
+    }
+}
+```
+
+```{r}
+comb_med2$Drug_Classification_V4[comb_med2$Drug_Classification_V4 == "CDK_inhibitor"] <- "CDK Inhibitor"
+comb_med2$Drug_Classification_V4[comb_med2$Drug_Classification_V4 == "Hormone_AI"] <- "Hormone Therapy (AI)"
+comb_med2$Drug_Classification_V4[comb_med2$Drug_Classification_V4 == "Hormone_GnRH"] <- "Hormone Therapy (GnRH)"
+comb_med2$Drug_Classification_V4[comb_med2$Drug_Classification_V4 == "Hormone_progestin"] <- "Hormone Therapy (Progestin)"
+comb_med2$Drug_Classification_V4[comb_med2$Drug_Classification_V4 == "Hormone_SERD"] <- "Hormone Therapy (SERD)"
+comb_med2$Drug_Classification_V4[comb_med2$Drug_Classification_V4 == "HER2_ERBB_inhibitor"] <- "HER2/ERBB Inhibitor"
+comb_med2$Drug_Classification_V4[comb_med2$Drug_Classification_V4 == "Hormone_SERM"] <- "Hormone Therapy (SERM)"
+comb_med2$Drug_Classification_V4[comb_med2$Drug_Classification_V4 == "MTOR_inhibitor"] <- "mTOR Inhibitor"
+comb_med2$Drug_Classification_V4[comb_med2$Drug_Classification_V4 == "Immune_CKI"] <- "Immunotherapy (CKI)"
+comb_med2$Drug_Classification_V4[comb_med2$Drug_Classification_V4 == "Immune_other"] <- "Immunotherapy (Other)"
+comb_med2$Drug_Classification_V4[comb_med2$Drug_Classification_V4 == "VEGF_Inhibitor"] <- "VEGF Inhibitor"
+comb_med2$Drug_Classification_V4[comb_med2$Drug_Classification_V4 == "TK_inhibitor"] <- "TK Inhibitor"
+comb_med2$Drug_Classification_V4[comb_med2$Drug_Classification_V4 == "TROP2_inhibitor"] <- "TROP2 Inhibitor"
+comb_med2$Drug_Classification_V4[comb_med2$Drug_Classification_V4 == "ALK_inhibitor"] <- "ALK Inhibitor"
+comb_med2$Drug_Classification_V4[comb_med2$Drug_Classification_V4 == "PI3K_inhibitor"] <- "PI3K Inhibitor"
+comb_med2$Drug_Classification_V4[comb_med2$Drug_Classification_V4 == "PARP_inhibitor"] <- "PARP Inhibitor"
+comb_med2$Drug_Classification_V4[comb_med2$Drug_Classification_V4 == "MEK_inhibitor"] <- "MEK Inhibitor"
+comb_med2$Drug_Classification_V4[comb_med2$Drug_Classification_V4 == "Hormone_AR"] <- "Hormone Therapy (AR)"
+comb_med2$Drug_Classification_V4[comb_med2$Drug_Classification_V4 == "Proteosome_Inhibitor"] <- "Proteosome Inhibitor"
+comb_med2$Drug_Classification_V4[comb_med2$Drug_Classification_V4 == "EGFR_inhibitor"] <- "EGFR Inhibitor"
+comb_med2$Drug_Classification_V4[comb_med2$Drug_Classification_V4 == "HER2_ERBB_Inhibitor (ADC)"] <- "HER2/ERBB Inhibitor (ADC)"
+
+comb_med2$Drug_Classification_V4[comb_med2$Drug_Classification_V4 == "Microtubule_Inhibitor"] <- "Chemotherapy (Microtubule Inhibitor)"
+comb_med2$Drug_Classification_V4[comb_med2$Drug_Classification_V4 == "Alkylating_Agent"] <- "Chemotherapy (Alkylating Agent)"
+comb_med2$Drug_Classification_V4[comb_med2$Drug_Classification_V4 == "Platinum_Based_Chemotherapy"] <- "Chemotherapy (Platinum Based)"
+comb_med2$Drug_Classification_V4[comb_med2$Drug_Classification_V4 == "Topoisomerase_Inhibitor"] <- "Chemotherapy (Topoisomerase Inhibitor)"
+comb_med2$Drug_Classification_V4[comb_med2$Drug_Classification_V4 == "Chemotherapy_other"] <- "Chemotherapy (Other)"
+comb_med2$Drug_Classification_V4[comb_med2$Drug_Classification_V4 == "Monoclonal_Antibody"] <- "Monoclonal Antibody"
+
+comb_med2$Drug_Classification_V4[comb_med2$Drug_Classification_V4 == "Antimetabolite"] <- "Chemotherapy (Antimetabolite)"
+comb_med2$Drug_Classification_V4[comb_med2$Drug_Classification_V4 == "Taxane"] <- "Chemotherapy (Taxane)"
+comb_med2$Drug_Classification_V4[comb_med2$Drug_Classification_V4 == "Antracycline"] <- "Chemotherapy (Antracycline)"
+
+drug_list <- na.omit(unique(comb_med2$Drug_Classification_V4))
+```
+
+
+Medications Before (Figure 1d)
+```{r}
+get_before_meds <- function(id, data){
+  sub <- subset(data, Test_ID == id)
+  drugs <- c()
+  for (drug in unique(sub$Drug_Classification_V4)){
+    sub2 <- subset(sub, Drug_Classification_V4 == drug)
+    days <- na.omit(sub2$Rel_Test)
+    if (length(days) > 0){
+    min <- min(days)
+    if (min < -90){drugs <- c(drugs, drug)}
+    }
+  }
+  if (length(drugs) > 0){
+  row <- data.frame("ID" = id, "Drug_Classification" = drugs, "UUID" = sub$UUID[1])
+  return(row)
+  }
+}
+
+before <- dplyr::bind_rows(lapply(unique(comb_med2$Test_ID), get_before_meds, data = comb_med2))
+```
+
+```{r}
+reformat_data <- function(id, data, drugs){
+  sub <- subset(data, ID == id)
+  val <- c()
+  for (d in drugs){
+    if (d %in% sub$Drug_Classification){val <- c(val, d)}
+    else{val <- c(val, NA)}
+  }
+  row <- data.frame(matrix(nrow = 1, ncol = length(drugs)+2))
+  row[1,] <- c(id, sub$UUID[1], val)
+  colnames(row) <- c("ID", "UUID", drugs)
+  return(row)
+}
+
+before2 <- dplyr::bind_rows(lapply(before$ID, reformat_data, data = before, drugs = drug_list))
+before2 <- unique(before2)
+
+all_sub <- subset(all_data, UUID %in% before2$UUID)
+before2 <- merge(all_sub[,c(1,3,9)], before2, by = "UUID")
+before2$Subtype[is.na(before2$Subtype) == T] <- "Not Reported"
+```
+
+```{r}
+# Calculate the proportion of NA values in each column
+na_proportions <- colMeans(is.na(before2))
+
+# Identify columns with more than 95% NA values
+cols_to_remove <- na_proportions > 0.99
+
+# Remove identified columns from the data frame
+before2_plot <- before2[, !cols_to_remove]
+```
+
+```{r}
+pal <- pal_observable("observable10", alpha = 0.9)(10)
+```
+
+
+```{r}
+library(ComplexHeatmap)
+
+drug_list <- setdiff(colnames(before2_plot)[-c(1:4)], c("NSAID", "Other"))
+before2_plot <- before2_plot[,c(colnames(before2_plot)[1:4], drug_list)]
+drug_list <- drug_list[order(drug_list)]
+hm_col = pal[8]
+colors = c("CDK Inhibitor" = hm_col, "Chemotherapy (Alkylating Agent)" = hm_col,
+           "Chemotherapy (Antimetabolite)" = hm_col, "Chemotherapy (Antracycline)" = hm_col,
+           "Chemotherapy (Microtubule Inhibitor)" = hm_col, "Chemotherapy (Platinum Based)" = hm_col,
+           "Chemotherapy (Taxane)" = hm_col, "Chemotherapy (Topoisomerase Inhibitor)" = hm_col,
+           "HER2/ERBB Inhibitor" = hm_col, "HER2/ERBB Inhibitor (ADC)" = hm_col,
+           "Hormone Therapy (AI)" = hm_col, "Hormone Therapy (GnRH)" = hm_col,
+           "Hormone Therapy (SERD)" = hm_col, "Hormone Therapy (SERM)" = hm_col,
+           "Immunotherapy (CKI)" = hm_col, "mTOR Inhibitor" = hm_col,
+           "PARP Inhibitor" = hm_col, "PI3K Inhibitor" = hm_col,
+           "TROP2 Inhibitor" = hm_col)
+before2_plot$Subtype <- factor(before2_plot$Subtype, levels = c("HR+/HER2-", "HR+/HER2+", "HR-/HER2+", "HR-/HER2-", "Not Reported"))
+
+jpeg("meds_before.jpeg", width = 2500, height = 1500, units = "px", res = 300) # You can adjust width and height
+
+column_ha = HeatmapAnnotation(Stage = before2_plot$Stage, Subtype = before2_plot$Subtype,
+                              col = list(Stage = c("Stage 0" = pal[5],
+                                                   "Stage I" = pal[6],
+                                                   "Stage II" = pal[7],
+                                                   "Stage III" = pal[8],
+                                                   "Stage IV" = pal[9],
+                                                   "Not Reported" = "white"),
+                                         Subtype = c("HR+/HER2-" = pal[4],
+                                                   "HR+/HER2+" = pal[3],
+                                                    "HR-/HER2+" = pal[2],
+                                                   "HR-/HER2-" = pal[1],
+                                                   "Not Reported" = "white")))
+Heatmap(t(before2_plot[,5:ncol(before2_plot)]), name = "Medications_Before", col = colors, na_col = "white",  top_annotation = column_ha, show_heatmap_legend = FALSE, show_column_names = FALSE, column_split = before2_plot$Subtype, row_order = drug_list, column_title_rot = 45,
+                      cluster_column_slices = T, cluster_columns = T, use_raster = F, row_names_gp = gpar(fontsize = 8))
+dev.off()
+```
+
+
+Medications (Any) After (Figure 1e)
+```{r}
+get_after_meds <- function(id, data){
+  sub <- subset(data, Test_ID == id)
+  drugs <- c()
+  for (drug in unique(sub$Drug_Classification_V4)){
+    sub2 <- subset(sub, Drug_Classification_V4 == drug)
+    days <- na.omit(sub2$Rel_Test)
+    if (length(days) > 0){
+    max <- max(days)
+    min <- min(days)
+    if (min >= -90){drugs <- c(drugs, drug)}
+    }
+  }
+  if (length(drugs) > 0){
+  row <- data.frame("ID" = id, "Drug_Classification" = drugs, "UUID" = sub2$UUID[1])
+  return(row)
+  }
+}
+
+after_all <- dplyr::bind_rows(lapply(unique(comb_med2$Test_ID), get_after_meds, data = comb_med2))
+```
+
+```{r}
+reformat_data <- function(id, data, drugs){
+  sub <- subset(data, ID == id)
+  val <- c()
+  for (d in drugs){
+    if (d %in% sub$Drug_Classification){val <- c(val, d)}
+    else{val <- c(val, NA)}
+  }
+  row <- data.frame(matrix(nrow = 1, ncol = length(drugs)+2))
+  row[1,] <- c(id, sub$UUID[1], val)
+  colnames(row) <- c("ID", "UUID", drugs)
+  return(row)
+}
+
+after2_all <- dplyr::bind_rows(lapply(after_all$ID, reformat_data, data = after_all, drugs = drug_list))
+after2_all <- unique(after2_all)
+
+all_sub <- subset(all_data, UUID %in% after2_all$UUID)
+after2_all <- merge(all_sub[,c(1,3,9)], after2_all, by = "UUID")
+after2_all$Subtype[is.na(after2_all$Subtype) == T] <- "Not Reported"
+
+```
+
+```{r}
+hm_col = pal[6]
+colors = c("CDK Inhibitor" = hm_col, "Chemotherapy (Alkylating Agent)" = hm_col,
+           "Chemotherapy (Antimetabolite)" = hm_col, "Chemotherapy (Antracycline)" = hm_col,
+           "Chemotherapy (Microtubule Inhibitor)" = hm_col, "Chemotherapy (Platinum Based)" = hm_col,
+           "Chemotherapy (Taxane)" = hm_col, "Chemotherapy (Topoisomerase Inhibitor)" = hm_col,
+           "HER2/ERBB Inhibitor" = hm_col, "HER2/ERBB Inhibitor (ADC)" = hm_col,
+           "Hormone Therapy (AI)" = hm_col, "Hormone Therapy (GnRH)" = hm_col,
+           "Hormone Therapy (SERD)" = hm_col, "Hormone Therapy (SERM)" = hm_col,
+           "Immunotherapy (CKI)" = hm_col, "mTOR Inhibitor" = hm_col,
+           "PARP Inhibitor" = hm_col, "PI3K Inhibitor" = hm_col,
+           "TROP2 Inhibitor" = hm_col)
+after2_all_plot <- after2_all[,colnames(before2_plot)]
+after2_all_plot$Subtype <- factor(after2_all_plot$Subtype, levels = c("HR+/HER2-", "HR+/HER2+", "HR-/HER2+", "HR-/HER2-", "Not Reported"))
+
+jpeg("meds_after.jpeg", width = 2500, height = 1500, units = "px",
+     res = 300) # You can adjust width and height
+
+column_ha = HeatmapAnnotation(Stage = after2_all_plot$Stage, Subtype = after2_all_plot$Subtype,
+                              col = list(Stage = c("Stage 0" = pal[5],
+                                                   "Stage I" = pal[6],
+                                                   "Stage II" = pal[7],
+                                                   "Stage III" = pal[8],
+                                                   "Stage IV" = pal[9],
+                                                   "Not Reported" = "white"),
+                                         Subtype = c("HR+/HER2-" = pal[4],
+                                                   "HR+/HER2+" = pal[3],
+                                                    "HR-/HER2+" = pal[2],
+                                                   "HR-/HER2-" = pal[1],
+                                                   "Not Reported" = "white")))
+Heatmap(t(after2_all_plot[,5:ncol(after2_all_plot)]), name = "Medications_After", col = colors, na_col = "white",  top_annotation = column_ha, show_heatmap_legend = FALSE, show_column_names = FALSE, column_split = after2_all_plot$Subtype,column_title_rot = 45,
+                     row_order = drug_list, use_raster = F, row_names_gp = gpar(fontsize = 8))
+dev.off()
+```
+
+```{r}
+before3 <- before2[,c(1,4:ncol(before2))]
+colnames(before3)[-c(1,2)] <- paste0(colnames(before3)[-c(1:2)], "_Before")
+cr_tests2 <- subset(cr_tests2, genetic_test %in% c("Guardant", "Tempus", "ashion"))
+pcdm_tests2 <- subset(pcdm_tests2, source %in% c("Guardant", "Tempus", "ashion"))
+
+no_before <- setdiff(setdiff(c(cr_tests2$`specimenID/accessionID`, pcdm_tests2$`specimenID/accessionID`), before3$ID), "NULL")
+missing_dat <- data.frame(matrix(NA, ncol = ncol(before3), nrow = length(no_before)))
+colnames(missing_dat) <- colnames(before3)
+missing_tests <- unique(rbind(subset(cr_tests2, `specimenID/accessionID` %in% no_before)[,c(1,3)], subset(pcdm_tests2, `specimenID/accessionID` %in% no_before)[,c(1,3)]))
+missing_tests <- subset(missing_tests, `specimenID/accessionID` != "NULL")
+missing_dat$UUID <- missing_tests$uuid
+missing_dat$ID <- missing_tests$`specimenID/accessionID`
+before3 <- rbind(before3, missing_dat)
+
+after3 <- after2_all[,c(1,4:ncol(after2_all))]
+colnames(after3)[-c(1,2)] <- paste0(colnames(after3)[-c(1:2)], "_After")
+
+no_after <- setdiff(setdiff(c(cr_tests2$`specimenID/accessionID`, pcdm_tests2$`specimenID/accessionID`), after3$ID), "NULL")
+missing_dat <- data.frame(matrix(NA, ncol = ncol(after3), nrow = length(no_after)))
+colnames(missing_dat) <- colnames(after3)
+missing_tests <- unique(rbind(subset(cr_tests2, `specimenID/accessionID` %in% no_after)[,c(1,3)], subset(pcdm_tests2, `specimenID/accessionID` %in% no_after)[,c(1,3)]))
+missing_tests <- subset(missing_tests, `specimenID/accessionID` != "NULL")
+missing_dat$UUID <- missing_tests$uuid
+missing_dat$ID <- missing_tests$`specimenID/accessionID`
+after3 <- rbind(after3, missing_dat)
+
+treatment3 <- unique(merge(before3, after3[,-1], by = "ID"))
+
+
+all_data2 <- merge(all_data, treatment3, by = "UUID")
+```
+
+Adding time on treatment for pretreatments
+```{r}
+get_before_med_times <- function(id, data){
+  sub <- subset(data, Test_ID == id)
+  drugs <- c()
+  total_days <- c()
+  for (drug in unique(sub$Drug_Classification_V4)){
+    sub2 <- subset(sub, Drug_Classification_V4 == drug)
+    days <- na.omit(sub2$Rel_Test)
+    if (length(days) > 0){
+    min <- min(days)
+    if (min < -90){
+      drugs <- c(drugs, drug)
+      time_start <- min
+      time_end <- c(-90, max(days))[which.min(c(-90, max(days)))]
+      total_days <- c(total_days, length(time_start:time_end))
+      }
+    }
+  }
+  if (length(drugs) > 0){
+  row <- data.frame("ID" = id, "Drug_Classification" = drugs, "UUID" = sub$UUID[1], "Time_on_Med" = total_days)
+  return(row)
+  }
+}
+
+before_times <- dplyr::bind_rows(lapply(unique(comb_med2$Test_ID), get_before_med_times, data = comb_med2))
+```
+
+```{r}
+reformat_data <- function(id, data, drugs){
+  sub <- subset(data, ID == id)
+  val <- c()
+  for (d in drugs){
+    if (d %in% sub$Drug_Classification){
+      sub2 <- subset(sub, Drug_Classification == d)
+      val <- c(val, sub2$Time_on_Med)
+      }
+    else{val <- c(val, 0)}
+  }
+  row <- data.frame(matrix(nrow = 1, ncol = length(drugs)+2))
+  row[1,] <- c(id, sub$UUID[1], val)
+  colnames(row) <- c("ID", "UUID", drugs)
+  return(row)
+}
+
+before2_times <- dplyr::bind_rows(lapply(before_times$ID, reformat_data, data = before_times, drugs = drug_list))
+before2_times <- unique(before2_times)
+colnames(before2_times)[-c(1:2)] <- paste0("Duration of ", colnames(before2_times)[-c(1:2)])
+
+all_sub <- subset(all_data, UUID %in% before2_times$UUID)
+before2_times <- merge(all_sub[,c(1,3,9)], before2_times, by = "UUID")
+before2_times$Subtype[is.na(before2_times$Subtype) == T] <- "Not Reported"
+
+#write.csv(before2_times, "pretreatment_durations.csv", row.names = F)
+```
+
+Save all curated clinical data
+```{r}
+#write.csv(all_data2, "combined_clinical.csv", row.names = F)
+```
+
+
+Calculate time to treatment change
+```{r}
+get_after_meds <- function(id, data){
+  sub <- subset(data, Test_ID == id)
+  drugs <- c()
+  start_day <- c()
+  med_names <- c()
+  for (drug in unique(sub$Drug_Classification_V4)){
+    sub2 <- subset(sub, Drug_Classification_V4 == drug)
+    days <- na.omit(sub2$Rel_Test)
+    
+    if (length(days) > 0){
+    max <- max(days)
+    min <- min(days)
+    if (max > -90){
+      drugs <- c(drugs, drug)
+      med_names <- c(med_names, paste0(unique(sub2$med_name), collapse = "_"))
+      start_day <- c(start_day, min(days))
+      }
+    }
+  }
+  if (length(drugs) > 0){
+  row <- data.frame("ID" = id, "Drug_Classification" = drugs, 
+                    "Start_Time" = start_day, "Med_Name" = med_names, "UUID" = sub2$UUID[1])
+  return(row)
+  }
+}
+
+after_all <- dplyr::bind_rows(lapply(unique(comb_med2$Test_ID), get_after_meds, data = comb_med2))
+```
+
+
+```{r}
+pcdm_cohort <- read_excel("~//Documents//COH Breast Cohort//HB-1646_BreastCaCohort_v5.xlsx", sheet = "PCDM_Cohort")
+cr_cohort <- read_excel("~//Documents//COH Breast Cohort//HB-1646_BreastCaCohort_v5.xlsx", sheet = "CR_Cohort")
+
+colnames(pcdm_cohort) <- pcdm_cohort[1,]
+pcdm_cohort <- pcdm_cohort[-1,]
+
+colnames(cr_cohort) <- cr_cohort[1,]
+cr_cohort <- cr_cohort[-1,]
+
+comb_last <- rbind(cr_cohort[,c(1,7)], pcdm_cohort[,c(1,6)])
+```
+
+```{r}
+sixm_combos <- function(x, data, test_data, last_day, treat_data){
+  # subset test data by individual test
+  test <- subset(test_data, `specimenID/accessionID` == x & genetic_test %in% c("ashion", "Tempus", "Guardant"))
+  uuid <- test$uuid[1]
+  test_type <- test$genetic_test[1]
+  # subset overall survival and treatment data from uuid
+  last_day <- subset(last_day, UUID == uuid)
+  last_treat <- subset(treat_data, UUID == uuid)
+  # find last day known alive
+  last <- max(c(as.numeric(last_day$days_Dx_to_LastAppt), as.numeric(last_treat$days_Dx_to_Med)))
+  if (nrow(test) > 0){
+    test <- test[order(test$days_since_first_dx),]
+    test_time <- test$days_since_first_dx[1]
+  
+  # get all medications taken at time of sequencing window or after
+  sub <- subset(data, ID == x)
+  sub <- subset(sub, Start_Time >= -90)
+  if (nrow(sub) > 0){
+  start_time <- min(as.numeric(sub$Start_Time))
+  end_time <- 90
+  # get first combination of treatments
+  firstcomb <- subset(sub, Start_Time %in% start_time:end_time)
+  start_times <- firstcomb$Start_Time
+  firstcomb_medname <- unique(firstcomb$Med_Name)
+  firstcomb <- unique(firstcomb$Drug_Classification)
+  
+  
+  sub <- subset(sub, Drug_Classification %in% c("HER2/ERBB Inhibitor", "CDK Inhibitor", "Immunotherapy (CKI)", "Chemotherapy (Microtubule Inhibitor)", "Chemotherapy (Alkylating Agent)", "Chemotherapy (Taxane)", "Chemotherapy (Antimetabolite)",
+                                                "Chemotherapy (Topoisomerase Inhibitor)", "Chemotherapy (Antracycline)",
+                                                "VEGF Inhibitor", "TK Inhibitor", "mTOR Inhibitor", "PI3K Inhibitor",
+                                                "TROP2 Inhibitor", "PARP Inhibitor", "ALK Inhibitor", "Immunotherapy (Other)",
+                                                "EGFR Inhibitor", "MEK Inhibitor", "HER2/ERBB Inhibitor (ADC)"))
+  
+  # find any medication started for the first time after sequencing window
+  later_meds <- subset(sub, Start_Time >= end_time)
+  later_meds.rm <- subset(later_meds, Drug_Classification %in% firstcomb)
+  later_meds <- dplyr::setdiff(later_meds, later_meds.rm)
+
+  # if there are medications in list, medications were changes event = 1, time is from first start date of new meds
+  if (nrow(later_meds) > 0){
+  time <- min(later_meds$Start_Time) - min(start_times)
+  event <- 1
+  }
+
+  # if list is empty, event = 0 no indicated treatment change, time is overall follow up time relative to start date of medication
+  if (nrow(later_meds) == 0){
+  time <- last - as.numeric(test_time)
+  time <- time - min(start_times)
+  event <- 0
+  }
+  
+  comb <- firstcomb
+  row <- data.frame("ID" = x, "UUID" = uuid,  "Medication_Combination" = comb, "Event" = event, "Time" = time, "Med_Name" = firstcomb_medname)
+  return(row)
+  }
+  }
+}
+colnames(pcdm_tests2)[2] <- "genetic_test"
+
+after_combinations <- dplyr::bind_rows(lapply(unique(after_all$ID), sixm_combos, data = after_all, test_data = rbind(cr_tests2, pcdm_tests2),
+                                       last_day = comb_last, treat_data = rbind(cr_med, pcdm_med)))
+```
+
+```{r}
+#write.csv(after_combinations, "patient_treatment_responses_time_to_change.csv", row.names = F)
+```
+

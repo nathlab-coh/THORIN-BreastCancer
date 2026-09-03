@@ -1,0 +1,3015 @@
+---
+title: "Figure 3, Pre-treatment Comparisons"
+author: "S. Grant"
+date: "2026-09-03"
+output: html_document
+---
+
+Format Data
+```{r}
+rna <- read.csv("~//Documents//COH Breast Cohort//updated_rnaseq_FINAL.csv")
+genes <- rna$X
+rna <- rna[,-1]
+rna <- data.frame(apply(rna, 2, as.numeric))
+rna <- log2(rna + 1)
+rownames(rna) <- genes
+colnames(rna) <- gsub("X.", "/", colnames(rna))
+
+clin <- before2_times
+clin$ID <- toupper(clin$ID)
+clin <- clin[,c(4,2,3,5:ncol(clin))]
+colnames(rna) <- gsub("[.]", "-", colnames(rna))
+missing_pretreatment <- setdiff(colnames(rna), clin$ID)
+clin <- subset(clin, ID %in% colnames(rna))
+```
+
+Establish treatment naive, endocrine treatment only, and chemotherapy treated patient cohorts
+
+```{r}
+comb_tests$`specimenID/accessionID` <- toupper(comb_tests$`specimenID/accessionID`)
+notreatment <- subset(comb_tests, `specimenID/accessionID` %in% missing_pretreatment)
+notreatment <- unique(notreatment)
+notreatment$days_since_first_dx <- as.numeric(notreatment$days_since_first_dx)
+plot(density(notreatment$days_since_first_dx))
+```
+
+```{r}
+notreatment2 <- subset(notreatment, days_since_first_dx <= 180)
+table(subset(all_data2, UUID %in% notreatment2$UUID)$Stage)
+notreatment2 <- subset(notreatment2, UUID %in% subset(all_data2, Stage %in% c("Stage I", "Stage II"))$UUID)
+```
+
+```{r}
+clin[,4:ncol(clin)] <- apply(clin[,4:ncol(clin)], 2, as.numeric)
+### endocrine therapy only
+clin$ET_Sum <- as.numeric(rowSums(clin[,grep("Hormone", colnames(clin))]))
+
+clin$Chemo_Sum <- as.numeric(rowSums(clin[,grep("Chemo", colnames(clin))]))
+
+other_cols <- setdiff(colnames(clin), c(colnames(clin)[grep("Hormone", colnames(clin))], "ID", "Stage", "Subtype", "ET_Sum", "Chemo_Sum", "Other_Sum"))
+clin$Other_Sum <- as.numeric(rowSums(clin[,other_cols]))
+endocrine_only <- subset(clin, ET_Sum > 30 & Other_Sum == 0)
+
+chemo <- subset(clin, Chemo_Sum >= 30)
+
+cdk <- subset(clin, `Duration of CDK Inhibitor` >= 30)
+
+her2 <- subset(clin, `Duration of HER2/ERBB Inhibitor` >= 30)
+
+all_other <- subset(clin, Other_Sum >= 30)
+```
+
+Get list of all markers associated with treatment condition from LASSO model
+- only running each analysis for subtypes with substantial sample sizes for comparison
+- removing non-coding genes from gene expression analyses
+
+RNA-seq
+```{r}
+all_genes_list <- data.frame()
+```
+
+
+```{r}
+hm_list = list()
+i <- 1
+for (subtype in c("HR+/HER2-")){
+  
+  data <- data.frame(t(rna))
+  data$Group <- NA
+  data$Group[rownames(data) %in% notreatment2$`specimenID/accessionID`] <- "Naive"
+  data$Group[rownames(data) %in% endocrine_only$ID] <- "Hormone"
+  
+  data <- na.omit(data)
+  all_data2$ID <- toupper(all_data2$ID)
+  clin2 <- subset(all_data2, ID %in% row.names(data))
+  data <- data[clin2$ID,]
+  
+  data$Subtype <- clin2$Subtype
+  data <- subset(data, Subtype == subtype)[,-ncol(data)]
+  data$Group <- factor(data$Group)
+  data$Group <- relevel(data$Group, ref = "Naive")
+  # hormone vs nontreated
+  set.seed(1)
+  fit1 <- cv.glmnet(as.matrix(data[,-ncol(data)]), 
+                    data$Group, family = "binomial", alpha = 1)
+  coef_matrix <- as.matrix(coef(fit1, s = "lambda.min"))
+  non_zero_vars <- coef_matrix[coef_matrix[, 1] != 0, ]
+  non_zero_df <- data.frame("Val" = as.numeric(non_zero_vars), "Name" = names(non_zero_vars))
+  non_zero_df <- non_zero_df[order(-non_zero_df$Val),]
+  selected_variables <- names(non_zero_vars)[names(non_zero_vars) != "(Intercept)"]
+  
+  all_genes_list <- rbind(all_genes_list, data.frame("Genes" = non_zero_df$Name,
+                                                     "Val" = non_zero_df$Val,
+                                                     "Subtype" = subtype,
+                                                     "Drug" = "Hormone Therapy"))
+
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP11", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP13", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP5", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP1", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RF0", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RNV", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("CTD", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RN7S", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("SNOR", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("MIR", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RNA", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RNU", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("AC0", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("VN1", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("AP0", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RPL", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RPS", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP4", selected_variables)])
+  selected_variables <- setdiff(selected_variables, c("AP001052.1", "AC123900.2", "AF254983.5"))
+
+  
+  data_filt <- data[, selected_variables]
+  data_filt$Group <- data$Group
+  data_filt$Subtype <- subtype
+  data_filt <- na.omit(data_filt)
+
+  p1_five <- c("#C2697FFF",  "#FBC559FF",  "#7FC269FF", "#4151B0FF",  "#785596FF")
+  column_ha = HeatmapAnnotation(Subtype = data_filt$Subtype,
+                                col = list(Subtype = c("HR+/HER2-" = p1_five[1],
+                                                       "HR+/HER2+" = p1_five[2],
+                                                       "HR-/HER2+" = p1_five[3],
+                                                       "HR-/HER2-" = p1_five[4],
+                                                       "Not Reported" = "white")))
+  data_filt[,-c((ncol(data_filt)-2):ncol(data_filt))] <- scale(data_filt[,-c((ncol(data_filt)-2):ncol(data_filt))])
+  hm <- Heatmap(t(data_filt[,-c((ncol(data_filt)-2):ncol(data_filt))]), name = "expression",  
+          na_col = "white",  top_annotation = column_ha, show_heatmap_legend = T, 
+          show_column_names = FALSE, column_split = data_filt$Group,
+          cluster_column_slices = T, show_row_names = T, column_title_rot = 45)
+  hm_list[[i]] <- hm
+  i <- i + 1
+}
+```
+
+
+```{r}
+cdk_hm_list = list()
+i <- 1
+for (subtype in c("HR+/HER2-")){
+  
+  data <- data.frame(t(rna))
+  data$Group <- NA
+  data$Group[rownames(data) %in% notreatment2$`specimenID/accessionID`] <- "Naive"
+  data$Group[rownames(data) %in% cdk$ID] <- "CDK_Inhibitor"
+  
+  data <- na.omit(data)
+  all_data2$ID <- toupper(all_data2$ID)
+  clin2 <- subset(all_data2, ID %in% row.names(data))
+  data <- data[clin2$ID,]
+  
+  data$Subtype <- clin2$Subtype
+  data <- subset(data, Subtype == subtype)[,-ncol(data)]
+  data$Group <- factor(data$Group)
+  data$Group <- relevel(data$Group, ref = "Naive")
+  # hormone vs nontreated
+  set.seed(1)
+  fit1 <- cv.glmnet(as.matrix(data[,-ncol(data)]), 
+                    data$Group, family = "binomial", alpha = 1)
+  coef_matrix <- as.matrix(coef(fit1, s = "lambda.min"))
+  non_zero_vars <- coef_matrix[coef_matrix[, 1] != 0, ]
+  non_zero_df <- data.frame("Val" = as.numeric(non_zero_vars), "Name" = names(non_zero_vars))
+  non_zero_df <- non_zero_df[order(-non_zero_df$Val),]
+  selected_variables <- names(non_zero_vars)[names(non_zero_vars) != "(Intercept)"]
+  
+  all_genes_list <- rbind(all_genes_list, data.frame("Genes" = non_zero_df$Name,
+                                                     "Val" = non_zero_df$Val,
+                                                     "Subtype" = subtype,
+                                                     "Drug" = "CDK Inhibitor"))
+                          
+                          
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP11", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP13", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP5", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP1", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RF0", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RNV", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("CTD", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RN7S", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("SNOR", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("MIR", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RNA", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RNU", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("KB.", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("AC0", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RPL", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RPS", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP4", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("AC1", selected_variables)])
+  selected_variables <- setdiff(selected_variables, c("AP001052.1", "AC123900.2", "AF254983.5", "BNIP3P29"))
+  
+  data_filt <- data[, selected_variables]
+  data_filt$Group <- data$Group
+  data_filt$Subtype <- subtype
+  data_filt <- na.omit(data_filt)
+
+  p1_five <- c("#C2697FFF",  "#FBC559FF",  "#7FC269FF", "#4151B0FF",  "#785596FF")
+  column_ha = HeatmapAnnotation(Subtype = data_filt$Subtype,
+                                col = list(Subtype = c("HR+/HER2-" = p1_five[1],
+                                                       "HR+/HER2+" = p1_five[2],
+                                                       "HR-/HER2+" = p1_five[3],
+                                                       "HR-/HER2-" = p1_five[4],
+                                                       "Not Reported" = "white")))
+  data_filt[,-c((ncol(data_filt)-2):ncol(data_filt))] <- scale(data_filt[,-c((ncol(data_filt)-2):ncol(data_filt))])
+  hm <- Heatmap(t(data_filt[,-c((ncol(data_filt)-2):ncol(data_filt))]), name = "expression",  
+          na_col = "white",  top_annotation = column_ha, show_heatmap_legend = T, 
+          show_column_names = FALSE, column_split = data_filt$Group,
+          cluster_column_slices = T, show_row_names = T, column_title_rot = 45)
+  cdk_hm_list[[i]] <- hm
+  i <- i + 1
+    
+}
+```
+
+```{r}
+her2_hm_list = list()
+i <- 1
+for (subtype in c("HR+/HER2+", "HR-/HER2+")){
+  
+  data <- data.frame(t(rna))
+  data$Group <- NA
+  data$Group[rownames(data) %in% notreatment2$`specimenID/accessionID`] <- "Naive"
+  data$Group[rownames(data) %in% her2$ID] <- "HER2_Inhibitor"
+  
+  data <- na.omit(data)
+  all_data2$ID <- toupper(all_data2$ID)
+  clin2 <- subset(all_data2, ID %in% row.names(data))
+  data <- data[clin2$ID,]
+  
+  data$Subtype <- clin2$Subtype
+  data <- subset(data, Subtype == subtype)[,-ncol(data)]
+  data$Group <- factor(data$Group)
+  data$Group <- relevel(data$Group, ref = "Naive")
+  # hormone vs nontreated
+  set.seed(1)
+  fit1 <- cv.glmnet(as.matrix(data[,-ncol(data)]), 
+                    data$Group, family = "binomial", alpha = 1)
+  coef_matrix <- as.matrix(coef(fit1, s = "lambda.min"))
+  non_zero_vars <- coef_matrix[coef_matrix[, 1] != 0, ]
+  non_zero_df <- data.frame("Val" = as.numeric(non_zero_vars), "Name" = names(non_zero_vars))
+  non_zero_df <- non_zero_df[order(-non_zero_df$Val),]
+  selected_variables <- names(non_zero_vars)[names(non_zero_vars) != "(Intercept)"]
+  
+  all_genes_list <- rbind(all_genes_list, data.frame("Genes" = non_zero_df$Name,
+                                                     "Val" = non_zero_df$Val,
+                                                     "Subtype" = subtype,
+                                                     "Drug" = "HER2 Inhibitor"))
+
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP11", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP13", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP5", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP1", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RF0", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RNV", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("CTD", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RN7S", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("SNOR", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("MIR", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RNA", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RNU", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("KB.", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP4", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("AC0", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP6", selected_variables)])
+  selected_variables <- setdiff(selected_variables, c("AP001052.1", "AC123900.2", "AF254983.5"))
+  
+  data_filt <- data[, selected_variables]
+  data_filt$Group <- data$Group
+  data_filt$Subtype <- subtype
+  data_filt <- na.omit(data_filt)
+
+  p1_five <- c("#C2697FFF",  "#FBC559FF",  "#7FC269FF", "#4151B0FF",  "#785596FF")
+  column_ha = HeatmapAnnotation(Subtype = data_filt$Subtype,
+                                col = list(Subtype = c("HR+/HER2-" = p1_five[1],
+                                                       "HR+/HER2+" = p1_five[2],
+                                                       "HR-/HER2+" = p1_five[3],
+                                                       "HR-/HER2-" = p1_five[4],
+                                                       "Not Reported" = "white")))
+  data_filt[,-c((ncol(data_filt)-2):ncol(data_filt))] <- scale(data_filt[,-c((ncol(data_filt)-2):ncol(data_filt))])
+  hm <- Heatmap(t(data_filt[,-c((ncol(data_filt)-2):ncol(data_filt))]), name = "expression",  
+          na_col = "white",  top_annotation = column_ha, show_heatmap_legend = T, 
+          show_column_names = FALSE, column_split = data_filt$Group,
+          cluster_column_slices = T, show_row_names = T, column_title_rot = 45)
+  her2_hm_list[[i]] <- hm
+  i <- i + 1
+    
+}
+```
+
+```{r}
+am_hm_list = list()
+i <- 1
+for (subtype in c("HR+/HER2-", "HR-/HER2-")){
+  
+  data <- data.frame(t(rna))
+  data$Group <- NA
+  data$Group[rownames(data) %in% notreatment2$`specimenID/accessionID`] <- "Naive"
+  data$Group[rownames(data) %in% subset(clin, `Duration of Chemotherapy (Antimetabolite)` >= 30)$ID] <- "Antimetabolite"
+  
+  data <- na.omit(data)
+  all_data2$ID <- toupper(all_data2$ID)
+  clin2 <- subset(all_data2, ID %in% row.names(data))
+  data <- data[clin2$ID,]
+  
+  data$Subtype <- clin2$Subtype
+  data <- subset(data, Subtype == subtype)[,-ncol(data)]
+  data$Group <- factor(data$Group)
+  data$Group <- relevel(data$Group, ref = "Naive")
+  # hormone vs nontreated
+  set.seed(1)
+  fit1 <- cv.glmnet(as.matrix(data[,-ncol(data)]), 
+                    data$Group, family = "binomial", alpha = 1)
+  coef_matrix <- as.matrix(coef(fit1, s = "lambda.min"))
+  non_zero_vars <- coef_matrix[coef_matrix[, 1] != 0, ]
+  non_zero_df <- data.frame("Val" = as.numeric(non_zero_vars), "Name" = names(non_zero_vars))
+  non_zero_df <- non_zero_df[order(-non_zero_df$Val),]
+  selected_variables <- names(non_zero_vars)[names(non_zero_vars) != "(Intercept)"]
+  
+  all_genes_list <- rbind(all_genes_list, data.frame("Genes" = non_zero_df$Name,
+                                                     "Val" = non_zero_df$Val,
+                                                     "Subtype" = subtype,
+                                                     "Drug" = "Antimetabolite"))
+
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP11", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP13", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP5", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP1", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RF0", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RNV", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("CTD", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RN7S", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("SNOR", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("MIR", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RNA", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RNU", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP4", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("AP0", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RPS", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("AC0", selected_variables)])
+  selected_variables <- setdiff(selected_variables, c("AP001052.1", "AC123900.2", "AF254983.5"))
+  
+  data_filt <- data[, c(selected_variables, "Group")]
+  data_filt$Subtype <- subtype
+  data_filt <- na.omit(data_filt)
+
+  p1_five <- c("#C2697FFF",  "#FBC559FF",  "#7FC269FF", "#4151B0FF",  "#785596FF")
+  column_ha = HeatmapAnnotation(Subtype = data_filt$Subtype,
+                                col = list(Subtype = c("HR+/HER2-" = p1_five[1],
+                                                       "HR+/HER2+" = p1_five[2],
+                                                       "HR-/HER2+" = p1_five[3],
+                                                       "HR-/HER2-" = p1_five[4],
+                                                       "Not Reported" = "white")))
+  data_filt[,-c((ncol(data_filt)-2):ncol(data_filt))] <- scale(data_filt[,-c((ncol(data_filt)-2):ncol(data_filt))])
+  hm <- Heatmap(t(data_filt[,-c((ncol(data_filt)-2):ncol(data_filt))]), name = "expression",  
+          na_col = "white",  top_annotation = column_ha, show_heatmap_legend = T, 
+          show_column_names = FALSE, column_split = data_filt$Group,
+          cluster_column_slices = T, show_row_names = T, column_title_rot = 45)
+  am_hm_list[[i]] <- hm
+  i <- i + 1
+    
+}
+```
+
+```{r}
+pb_hm_list = list()
+i <- 1
+for (subtype in c("HR+/HER2-")){
+  
+  data <- data.frame(t(rna))
+  data$Group <- NA
+  data$Group[rownames(data) %in% notreatment2$`specimenID/accessionID`] <- "Naive"
+  data$Group[rownames(data) %in% subset(clin, `Duration of Chemotherapy (Platinum Based)` >= 30)$ID] <- "Platinum-Based"
+  
+  data <- na.omit(data)
+  all_data2$ID <- toupper(all_data2$ID)
+  clin2 <- subset(all_data2, ID %in% row.names(data))
+  data <- data[clin2$ID,]
+  
+  data$Subtype <- clin2$Subtype
+  data <- subset(data, Subtype == subtype)[,-ncol(data)]
+  data$Group <- factor(data$Group)
+  data$Group <- relevel(data$Group, ref = "Naive")
+  # hormone vs nontreated
+  set.seed(1)
+  fit1 <- cv.glmnet(as.matrix(data[,-ncol(data)]), 
+                    data$Group, family = "binomial", alpha = 1)
+  coef_matrix <- as.matrix(coef(fit1, s = "lambda.min"))
+  non_zero_vars <- coef_matrix[coef_matrix[, 1] != 0, ]
+  non_zero_df <- data.frame("Val" = as.numeric(non_zero_vars), "Name" = names(non_zero_vars))
+  non_zero_df <- non_zero_df[order(-non_zero_df$Val),]
+  selected_variables <- names(non_zero_vars)[names(non_zero_vars) != "(Intercept)"]
+  
+  all_genes_list <- rbind(all_genes_list, data.frame("Genes" = non_zero_df$Name,
+                                                     "Val" = non_zero_df$Val,
+                                                     "Subtype" = subtype,
+                                                     "Drug" = "Platinum Based"))
+
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP11", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP13", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP5", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP1", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RF0", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RNV", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("CTD", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RN7S", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("SNOR", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("MIR", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RNA", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RNU", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP4", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("AP0", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("AC0", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("AC1", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("KB.", selected_variables)])
+  selected_variables <- setdiff(selected_variables, c("AP001052.1", "AC123900.2", "AF254983.5"))
+  
+  data_filt <- data[, c(selected_variables, "Group")]
+  data_filt$Subtype <- subtype
+  data_filt <- na.omit(data_filt)
+
+  p1_five <- c("#C2697FFF",  "#FBC559FF",  "#7FC269FF", "#4151B0FF",  "#785596FF")
+  column_ha = HeatmapAnnotation(Subtype = data_filt$Subtype,
+                                col = list(Subtype = c("HR+/HER2-" = p1_five[1],
+                                                       "HR+/HER2+" = p1_five[2],
+                                                       "HR-/HER2+" = p1_five[3],
+                                                       "HR-/HER2-" = p1_five[4],
+                                                       "Not Reported" = "white")))
+  data_filt[,-c((ncol(data_filt)-2):ncol(data_filt))] <- scale(data_filt[,-c((ncol(data_filt)-2):ncol(data_filt))])
+  hm <- Heatmap(t(data_filt[,-c((ncol(data_filt)-2):ncol(data_filt))]), name = "expression",  
+          na_col = "white",  top_annotation = column_ha, show_heatmap_legend = T, 
+          show_column_names = FALSE, column_split = data_filt$Group,
+          cluster_column_slices = T, show_row_names = T, column_title_rot = 45)
+  pb_hm_list[[i]] <- hm
+  i <- i + 1
+    
+}
+```
+
+
+```{r}
+antra_hm_list = list()
+i <- 1
+for (subtype in c("HR+/HER2-")){
+  
+  data <- data.frame(t(rna))
+  data$Group <- NA
+  data$Group[rownames(data) %in% notreatment2$`specimenID/accessionID`] <- "Naive"
+  data$Group[rownames(data) %in% subset(clin, `Duration of Chemotherapy (Antracycline)` >= 30)$ID] <- "Antracycline"
+  
+  data <- na.omit(data)
+  all_data2$ID <- toupper(all_data2$ID)
+  clin2 <- subset(all_data2, ID %in% row.names(data))
+  data <- data[clin2$ID,]
+  
+  data$Subtype <- clin2$Subtype
+  data <- subset(data, Subtype == subtype)[,-ncol(data)]
+  data$Group <- factor(data$Group)
+  data$Group <- relevel(data$Group, ref = "Naive")
+  # hormone vs nontreated
+  set.seed(1)
+  fit1 <- cv.glmnet(as.matrix(data[,-ncol(data)]), 
+                    data$Group, family = "binomial", alpha = 1)
+  coef_matrix <- as.matrix(coef(fit1, s = "lambda.min"))
+  non_zero_vars <- coef_matrix[coef_matrix[, 1] != 0, ]
+  non_zero_df <- data.frame("Val" = as.numeric(non_zero_vars), "Name" = names(non_zero_vars))
+  non_zero_df <- non_zero_df[order(-non_zero_df$Val),]
+  selected_variables <- names(non_zero_vars)[names(non_zero_vars) != "(Intercept)"]
+  
+  all_genes_list <- rbind(all_genes_list, data.frame("Genes" = non_zero_df$Name,
+                                                     "Val" = non_zero_df$Val,
+                                                     "Subtype" = subtype,
+                                                     "Drug" = "Antracycline"))
+
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP11", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP13", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP5", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP1", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RF0", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RNV", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("CTD", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RN7S", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("SNOR", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("MIR", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RNA", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RNU", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP4", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("AP0", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("AC1", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("AC0", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("LINC", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("FAM", selected_variables)])
+  selected_variables <- setdiff(selected_variables, c("AP001052.1", "AC123900.2", "AF254983.5"))
+  
+  data_filt <- data[, c(selected_variables, "Group")]
+  data_filt$Subtype <- subtype
+  data_filt <- na.omit(data_filt)
+
+  p1_five <- c("#C2697FFF",  "#FBC559FF",  "#7FC269FF", "#4151B0FF",  "#785596FF")
+  column_ha = HeatmapAnnotation(Subtype = data_filt$Subtype,
+                                col = list(Subtype = c("HR+/HER2-" = p1_five[1],
+                                                       "HR+/HER2+" = p1_five[2],
+                                                       "HR-/HER2+" = p1_five[3],
+                                                       "HR-/HER2-" = p1_five[4],
+                                                       "Not Reported" = "white")))
+  data_filt[,-c((ncol(data_filt)-2):ncol(data_filt))] <- scale(data_filt[,-c((ncol(data_filt)-2):ncol(data_filt))])
+  hm <- Heatmap(t(data_filt[,-c((ncol(data_filt)-2):ncol(data_filt))]), name = "expression",  
+          na_col = "white",  top_annotation = column_ha, show_heatmap_legend = T, 
+          show_column_names = FALSE, column_split = data_filt$Group,
+          cluster_column_slices = T, show_row_names = T, column_title_rot = 45)
+  antra_hm_list[[i]] <- hm
+  i <- i + 1
+    
+}
+```
+
+
+```{r}
+aa_hm_list = list()
+i <- 1
+for (subtype in c("HR+/HER2-")){
+  
+  data <- data.frame(t(rna))
+  data$Group <- NA
+  data$Group[rownames(data) %in% notreatment2$`specimenID/accessionID`] <- "Naive"
+  data$Group[rownames(data) %in% subset(clin, `Duration of Chemotherapy (Alkylating Agent)` >= 30)$ID] <- "Alkylating Agent"
+  
+  data <- na.omit(data)
+  all_data2$ID <- toupper(all_data2$ID)
+  clin2 <- subset(all_data2, ID %in% row.names(data))
+  data <- data[clin2$ID,]
+  
+  data$Subtype <- clin2$Subtype
+  data <- subset(data, Subtype == subtype)[,-ncol(data)]
+  data$Group <- factor(data$Group)
+  data$Group <- relevel(data$Group, ref = "Naive")
+  # hormone vs nontreated
+  set.seed(1)
+  fit1 <- cv.glmnet(as.matrix(data[,-ncol(data)]), 
+                    data$Group, family = "binomial", alpha = 1)
+  coef_matrix <- as.matrix(coef(fit1, s = "lambda.min"))
+  non_zero_vars <- coef_matrix[coef_matrix[, 1] != 0, ]
+  non_zero_df <- data.frame("Val" = as.numeric(non_zero_vars), "Name" = names(non_zero_vars))
+  non_zero_df <- non_zero_df[order(-non_zero_df$Val),]
+  selected_variables <- names(non_zero_vars)[names(non_zero_vars) != "(Intercept)"]
+  
+  all_genes_list <- rbind(all_genes_list, data.frame("Genes" = non_zero_df$Name,
+                                                     "Val" = non_zero_df$Val,
+                                                     "Subtype" = subtype,
+                                                     "Drug" = "Alkylating Agent"))
+
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP11", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP13", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP5", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP1", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RF0", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RNV", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("CTD", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RN7S", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("SNOR", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("MIR", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RNA", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RNU", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP4", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("AP0", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("AC1", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("AC0", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("LINC", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("FAM", selected_variables)])
+  selected_variables <- setdiff(selected_variables, c("AP001052.1", "AC123900.2", "AF254983.5"))
+  
+  data_filt <- data[, c(selected_variables, "Group")]
+  data_filt$Subtype <- subtype
+  data_filt <- na.omit(data_filt)
+
+  p1_five <- c("#C2697FFF",  "#FBC559FF",  "#7FC269FF", "#4151B0FF",  "#785596FF")
+  column_ha = HeatmapAnnotation(Subtype = data_filt$Subtype,
+                                col = list(Subtype = c("HR+/HER2-" = p1_five[1],
+                                                       "HR+/HER2+" = p1_five[2],
+                                                       "HR-/HER2+" = p1_five[3],
+                                                       "HR-/HER2-" = p1_five[4],
+                                                       "Not Reported" = "white")))
+  data_filt[,-c((ncol(data_filt)-2):ncol(data_filt))] <- scale(data_filt[,-c((ncol(data_filt)-2):ncol(data_filt))])
+  hm <- Heatmap(t(data_filt[,-c((ncol(data_filt)-2):ncol(data_filt))]), name = "expression",  
+          na_col = "white",  top_annotation = column_ha, show_heatmap_legend = T, 
+          show_column_names = FALSE, column_split = data_filt$Group,
+          cluster_column_slices = T, show_row_names = T, column_title_rot = 45)
+  aa_hm_list[[i]] <- hm
+  i <- i + 1
+    
+}
+```
+
+
+```{r}
+taxane_hm_list = list()
+i <- 1
+for (subtype in c("HR+/HER2-")){
+  
+  data <- data.frame(t(rna))
+  data$Group <- NA
+  data$Group[rownames(data) %in% notreatment2$`specimenID/accessionID`] <- "Naive"
+  data$Group[rownames(data) %in% subset(clin, `Duration of Chemotherapy (Taxane)` >= 30)$ID] <- "Taxane"
+  
+  data <- na.omit(data)
+  all_data2$ID <- toupper(all_data2$ID)
+  clin2 <- subset(all_data2, ID %in% row.names(data))
+  data <- data[clin2$ID,]
+  
+  data$Subtype <- clin2$Subtype
+  data <- subset(data, Subtype == subtype)[,-ncol(data)]
+  data$Group <- factor(data$Group)
+  data$Group <- relevel(data$Group, ref = "Naive")
+  # hormone vs nontreated
+  set.seed(1)
+  fit1 <- cv.glmnet(as.matrix(data[,-ncol(data)]), 
+                    data$Group, family = "binomial", alpha = 1)
+  coef_matrix <- as.matrix(coef(fit1, s = "lambda.min"))
+  non_zero_vars <- coef_matrix[coef_matrix[, 1] != 0, ]
+  non_zero_df <- data.frame("Val" = as.numeric(non_zero_vars), "Name" = names(non_zero_vars))
+  non_zero_df <- non_zero_df[order(-non_zero_df$Val),]
+  selected_variables <- names(non_zero_vars)[names(non_zero_vars) != "(Intercept)"]
+  
+  all_genes_list <- rbind(all_genes_list, data.frame("Genes" = non_zero_df$Name,
+                                                     "Val" = non_zero_df$Val,
+                                                     "Subtype" = subtype,
+                                                     "Drug" = "Taxane"))
+
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP11", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP13", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP5", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP1", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RF0", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RNV", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("CTD", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RN7S", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("SNOR", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("MIR", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RNA", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RNU", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP4", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("AP0", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("AC1", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("AC0", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("LINC", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("FAM", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("KB.", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RPS", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RPL", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("RP3", selected_variables)])
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("CTB", selected_variables)])
+  selected_variables <- setdiff(selected_variables, c("AP001052.1", "AC123900.2", "AF254983.5"))
+  
+  data_filt <- data[, c(selected_variables, "Group")]
+  data_filt$Subtype <- subtype
+  data_filt <- na.omit(data_filt)
+
+  p1_five <- c("#C2697FFF",  "#FBC559FF",  "#7FC269FF", "#4151B0FF",  "#785596FF")
+  column_ha = HeatmapAnnotation(Subtype = data_filt$Subtype,
+                                col = list(Subtype = c("HR+/HER2-" = p1_five[1],
+                                                       "HR+/HER2+" = p1_five[2],
+                                                       "HR-/HER2+" = p1_five[3],
+                                                       "HR-/HER2-" = p1_five[4],
+                                                       "Not Reported" = "white")))
+  data_filt[,-c((ncol(data_filt)-2):ncol(data_filt))] <- scale(data_filt[,-c((ncol(data_filt)-2):ncol(data_filt))])
+  hm <- Heatmap(t(data_filt[,-c((ncol(data_filt)-2):ncol(data_filt))]), name = "expression",  
+          na_col = "white",  top_annotation = column_ha, show_heatmap_legend = T, 
+          show_column_names = FALSE, column_split = data_filt$Group,
+          cluster_column_slices = T, show_row_names = T, column_title_rot = 45)
+  taxane_hm_list[[i]] <- hm
+  i <- i + 1
+    
+}
+```
+
+```{r}
+summary <- read.csv("~//Downloads//protein_coding_gene_categories_with_summaries.csv")
+colnames(summary)[1] <- "Genes"
+all_genes <- merge(all_genes_list, summary, by = "Genes")
+```
+
+```{r}
+all_genes2 <- subset(all_genes, Val > 0)
+```
+
+Plot up and downregulated genes (Figure 3a-b)
+```{r}
+library(ggsankey)
+all_genes2 <- unique(all_genes2)
+df <- all_genes2 %>%
+  make_long(Drug, Genes)
+
+## add color
+df$node <- factor(df$node, levels = c(unique(all_genes2$Drug), unique(all_genes2$Category),
+                                      unique(all_genes2$Genes)))
+
+
+colors <- c(pal <- pal_observable("observable10", alpha = 0.9)(8),
+            rep("white", length(unique(all_genes2$Genes))))
+```
+
+```{r}
+ggplot(df, aes(x = x, 
+               next_x = next_x, 
+               node = node, 
+               next_node = next_node,
+               label = node,
+               fill = node)) +
+  
+  geom_sankey() +
+  geom_sankey_label(size = 2, color = 1, fill = "white") +
+  theme_sankey(base_size = 16) +
+  scale_fill_manual(values = colors) +
+  theme(legend.position = "none")
+```
+
+```{r}
+group <- c()
+for (i in 1:nrow(df)){
+  if (df$x[i] == 'Genes'){group <- c(group, df$next_node[i])}
+  if (df$x[i] == 'Drug'){group <- c(group, as.character(df$node[i]))}
+}
+df$Group <- group
+
+ls_order <- c()
+for (g in unique(all_genes$Category)){
+  ls_order <- c(ls_order, unique(subset(all_genes, Category == g)$Genes))
+}
+
+df$next_node <- factor(df$next_node, levels = c(ls_order, unique(df$Group)))
+df$node <- factor(df$node, levels = c(ls_order, unique(df$Group)))
+
+mycolors <- pal_observable("observable10", alpha = 0.9)(8)
+
+width <- .1
+p <- ggplot(df, aes(x = x, next_x = next_x, node = node, next_node = next_node, fill = Group, label = node)) +
+  geom_sankey(flow.alpha = 1, node.color = "black", show.legend = FALSE, width = 0.1, linewidth = 0.1) +
+  theme_void() +
+  theme(
+    plot.margin = unit(rep(5.5, 4), "pt")
+  ) +
+  scale_fill_manual(values = mycolors)
+
+
+# Get the data from the flows layer
+dat <- layer_data(last_plot(), 1) |>
+  filter(x ==  2 - width / 2) |>
+  distinct(fill, flow_end_ymax, .keep_all = TRUE)
+
+# Get the data from the boxes layer
+dat1 <- layer_data(last_plot(), 2) |>
+  filter(xmin == 2 - width / 2)
+p +
+  geom_rect(data = dat, aes(
+    xmin = x, xmax = x + width,
+    ymin = flow_end_ymin, ymax = flow_end_ymax,
+    fill = label
+  ), inherit.aes = FALSE) +
+  # Draw the outline
+  geom_rect(data = dat1, aes(
+    xmin = xmin, xmax = xmax,
+    ymin = ymin, ymax = ymax
+  ), inherit.aes = FALSE, fill = NA, color = NA, linewidth = 0.2) +
+  #geom_sankey_text(data = subset(df_phenotypes, x == "Phenotype"), size = 2, color = "black") +
+  #geom_sankey_text(data = subset(df_phenotypes, x == "Genes"), size = 2, color = "black") +
+  #geom_sankey_label(size = 1, color = "black", fill = "white") +
+    geom_sankey_text(
+    aes(
+      # Align labels conditional on position
+      hjust = dplyr::case_when(
+        x == "Phenotype" ~ 1,
+        x == "Genes" ~ 0
+      )
+    ),
+    size = 3,
+    color = "black"
+  ) +
+  guides(fill = "none")
+
+```
+
+```{r}
+all_genes2 <- subset(all_genes, Val < 0)
+```
+
+```{r}
+library(ggsankey)
+all_genes2 <- unique(all_genes2)
+df <- all_genes2 %>%
+  make_long(Drug, Genes)
+```
+
+```{r}
+ggplot(df, aes(x = x, 
+               next_x = next_x, 
+               node = node, 
+               next_node = next_node,
+               label = node,
+               fill = node)) +
+  
+  geom_sankey() +
+  geom_sankey_label(size = 2, color = 1, fill = "white") +
+  theme_sankey(base_size = 16) +
+  scale_fill_observable()+
+  #scale_fill_manual(values = colors) +
+  theme(legend.position = "none")
+```
+```{r}
+group <- c()
+for (i in 1:nrow(df)){
+  if (df$x[i] == 'Genes'){group <- c(group, df$next_node[i])}
+  if (df$x[i] == 'Drug'){group <- c(group, df$node[i])}
+}
+df$Group <- group
+
+ls_order <- c()
+for (g in unique(all_genes$Category)){
+  ls_order <- c(ls_order, intersect(unique(subset(all_genes, Category == g)$Genes), df$node))
+}
+
+df$next_node <- factor(df$next_node, levels = c(ls_order, unique(df$Group)))
+df$node <- factor(df$node, levels = c(ls_order, unique(df$Group)))
+
+mycolors <- pal_observable("observable10", alpha = 0.9)(8)
+
+width <- .1
+p <- ggplot(df, aes(x = x, next_x = next_x, node = node, next_node = next_node, fill = Group, label = node)) +
+  geom_sankey(flow.alpha = 1, node.color = "black", show.legend = FALSE, width = 0.1, linewidth = 0.1) +
+  theme_void() +
+  theme(
+    plot.margin = unit(rep(5.5, 4), "pt")
+  ) +
+  scale_fill_manual(values = mycolors)
+
+
+# Get the data from the flows layer
+dat <- layer_data(last_plot(), 1) |>
+  filter(x ==  2 - width / 2) |>
+  distinct(fill, flow_end_ymax, .keep_all = TRUE)
+
+# Get the data from the boxes layer
+dat1 <- layer_data(last_plot(), 2) |>
+  filter(xmin == 2 - width / 2)
+p +
+  geom_rect(data = dat, aes(
+    xmin = x, xmax = x + width,
+    ymin = flow_end_ymin, ymax = flow_end_ymax,
+    fill = label
+  ), inherit.aes = FALSE) +
+  # Draw the outline
+  geom_rect(data = dat1, aes(
+    xmin = xmin, xmax = xmax,
+    ymin = ymin, ymax = ymax
+  ), inherit.aes = FALSE, fill = NA, color = NA, linewidth = 0.2) +
+  #geom_sankey_text(data = subset(df_phenotypes, x == "Phenotype"), size = 2, color = "black") +
+  #geom_sankey_text(data = subset(df_phenotypes, x == "Genes"), size = 2, color = "black") +
+  #geom_sankey_label(size = 1, color = "black", fill = "white") +
+    geom_sankey_text(
+    aes(
+      # Align labels conditional on position
+      hjust = dplyr::case_when(
+        x == "Phenotype" ~ 1,
+        x == "Genes" ~ 0
+      )
+    ),
+    size = 3,
+    color = "black"
+  ) +
+  guides(fill = "none")
+
+```
+
+```{r}
+markers <- rbind(markers, data.frame("Data" = "RNA", "Marker" = all_genes_list$Genes, "Drug" = all_genes_list$Drug))
+```
+
+Ecotyper State Abundances
+
+```{r}
+annotations <- read.csv("state_annotations.csv")
+annotations <- annotations[-1,]
+
+celltypes <- c("B.cells", "CD4.T.cells", "CD8.T.cells", "Dendritic.cells", "Endothelial.cells", "Epithelial.cells",
+               "Fibroblasts", "Mast.cells", "Monocytes.and.Macrophages", "PMNs", "NK.cells", "PCs")
+celltypes_labels <- unique(annotations$Cell.type)
+
+
+sa_df <- data.frame()
+for (i in 1:length(celltypes)){
+  
+  celltype <- celltypes[i]
+  celltype_label <- celltypes_labels[i]
+  
+  state_abundance <- read.delim(paste0("~//ecotyper_rnaseq_FINAL//", 
+                                       celltype, "//state_abundances.txt"), sep = "\t")
+  
+  state_abundance$Cell.state <- row.names(state_abundance)
+  if (celltype == "PCs"){celltype <- "Plasma cells"}
+  anno_sub <- subset(annotations, Cell.type == gsub("[.]", " ",celltype))
+  state_abundance <- merge(state_abundance, anno_sub[,c("Cell.type", "Cell.state", "Cell.state.annotation")], by = "Cell.state")
+  
+  sa_df <- rbind(sa_df, state_abundance)
+}
+```
+
+```{r}
+clin2 <- all_data2
+clin2$ID <- gsub("[^[:alnum:] ]", "", clin2$ID)
+
+row.names(sa_df) <- paste0(sa_df$Cell.type, " ", sa_df$Cell.state.annotation)
+sa_df <- sa_df[,-c(1,1734:1735)]
+sa_df <- data.frame(t(sa_df))
+```
+
+```{r}
+plot_list = list()
+i <- 1
+for (subtype in c("HR+/HER2-")){
+  data <- sa_df
+  data$Group <- NA
+  data$Group[rownames(data) %in% gsub("[^[:alnum:] ]", "", notreatment2$`specimenID/accessionID`)] <- "Naive"
+  data$Group[rownames(data) %in% gsub("[^[:alnum:] ]", "", endocrine_only$ID)] <- "Hormone"
+  
+  data <- na.omit(data)
+
+  clin3 <- subset(clin2, ID %in% row.names(data))
+  data <- data[clin3$ID,]
+  
+  data$Subtype <- clin3$Subtype
+  data <- subset(data, Subtype == subtype)[,-ncol(data)]
+  # hormone vs nontreated
+  set.seed(1)
+  fit1 <- cv.glmnet(as.matrix(data[,-ncol(data)]), 
+                    data$Group, family = "binomial", alpha = 1)
+  coef_matrix <- as.matrix(coef(fit1, s = "lambda.min"))
+  non_zero_vars <- coef_matrix[coef_matrix[, 1] != 0, ]
+  non_zero_df <- data.frame("Val" = as.numeric(non_zero_vars), "Name" = names(non_zero_vars))
+  non_zero_df <- non_zero_df[order(-non_zero_df$Val),]
+  selected_variables <- names(non_zero_vars)[names(non_zero_vars) != "(Intercept)"]
+  
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("Unknown", selected_variables)])
+
+  
+  data_filt <- data[, selected_variables]
+  data_filt$Group <- data$Group
+  data_filt$Subtype <- subtype
+  data_filt <- na.omit(data_filt)
+
+  data_filt <- data_filt %>% tidyr::pivot_longer( 
+                             cols = 1:23, 
+                             names_to = "State", 
+                             values_to = "Abundance")
+  
+  plot <- ggplot(data_filt, aes(x = Group, y = Abundance, fill = Group)) +
+    geom_boxplot(position = "dodge2", aes(fill = Group)) + 
+    theme_classic() + 
+    ggpubr::stat_compare_means(hide.ns = T, vjust = 1.1) +
+    facet_wrap(~State, scale = "free_y")
+  markers <- rbind(markers, data.frame("Data" = "Ecotyper", "Marker" = unique(data_filt$State), "Drug" = "Hormone Therapy"))
+  
+  plot_list[[i]] <- plot
+  i <- i + 1
+    
+}
+
+```
+
+
+```{r}
+cdk_plot_list = list()
+i <- 1
+for (subtype in c("HR+/HER2-")){
+  data <- sa_df
+  data$Group <- NA
+  data$Group[rownames(data) %in% gsub("[^[:alnum:] ]", "", notreatment2$`specimenID/accessionID`)] <- "Naive"
+  data$Group[rownames(data) %in% gsub("[^[:alnum:] ]", "", cdk$ID)] <- "CDK Inhibitor"
+  
+  data <- na.omit(data)
+
+  clin3 <- subset(clin2, ID %in% row.names(data))
+  data <- data[clin3$ID,]
+  
+  data$Subtype <- clin3$Subtype
+  data <- subset(data, Subtype == subtype)[,-ncol(data)]
+  # hormone vs nontreated
+  set.seed(1)
+  fit1 <- cv.glmnet(as.matrix(data[,-ncol(data)]), 
+                    data$Group, family = "binomial", alpha = 1)
+  coef_matrix <- as.matrix(coef(fit1, s = "lambda.min"))
+  non_zero_vars <- coef_matrix[coef_matrix[, 1] != 0, ]
+  non_zero_df <- data.frame("Val" = as.numeric(non_zero_vars), "Name" = names(non_zero_vars))
+  non_zero_df <- non_zero_df[order(-non_zero_df$Val),]
+  selected_variables <- names(non_zero_vars)[names(non_zero_vars) != "(Intercept)"]
+  
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("Unknown", selected_variables)])
+
+  
+  data_filt <- data[, selected_variables]
+  data_filt$Group <- data$Group
+  data_filt$Subtype <- subtype
+  data_filt <- na.omit(data_filt)
+
+  data_filt <- data_filt %>% tidyr::pivot_longer( 
+                             cols = 1:(ncol(data_filt)-3), 
+                             names_to = "State", 
+                             values_to = "Abundance")
+  
+  plot <- ggplot(data_filt, aes(x = Group, y = Abundance, fill = Group)) +
+    geom_boxplot(position = "dodge2", aes(fill = Group)) + 
+    theme_classic() + 
+    ggpubr::stat_compare_means(hide.ns = T, vjust = 1.1) +
+    facet_wrap(~State, scale = "free_y")
+  markers <- rbind(markers, data.frame("Data" = "Ecotyper", "Marker" = unique(data_filt$State), "Drug" = "CDK Inhibitor"))
+  cdk_plot_list[[i]] <- plot
+  i <- i + 1
+    
+}
+
+```
+
+
+```{r}
+her2_plot_list = list()
+i <- 1
+for (subtype in c("HR+/HER2+", "HR-/HER2+")){
+  data <- sa_df
+  data$Group <- NA
+  data$Group[rownames(data) %in% gsub("[^[:alnum:] ]", "", notreatment2$`specimenID/accessionID`)] <- "Naive"
+  data$Group[rownames(data) %in% gsub("[^[:alnum:] ]", "", her2$ID)] <- "HER2 Inhibitor"
+  
+  data <- na.omit(data)
+
+  clin3 <- subset(clin2, ID %in% row.names(data))
+  data <- data[clin3$ID,]
+  
+  data$Subtype <- clin3$Subtype
+  data <- subset(data, Subtype == subtype)[,-ncol(data)]
+  # hormone vs nontreated
+  set.seed(1)
+  fit1 <- cv.glmnet(as.matrix(data[,-ncol(data)]), 
+                    data$Group, family = "binomial", alpha = 1)
+  coef_matrix <- as.matrix(coef(fit1, s = "lambda.min"))
+  non_zero_vars <- coef_matrix[coef_matrix[, 1] != 0, ]
+  non_zero_df <- data.frame("Val" = as.numeric(non_zero_vars), "Name" = names(non_zero_vars))
+  non_zero_df <- non_zero_df[order(-non_zero_df$Val),]
+  selected_variables <- names(non_zero_vars)[names(non_zero_vars) != "(Intercept)"]
+  
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("Unknown", selected_variables)])
+
+  
+  data_filt <- data[, selected_variables]
+  data_filt$Group <- data$Group
+  data_filt$Subtype <- subtype
+  data_filt <- na.omit(data_filt)
+
+  data_filt <- data_filt %>% tidyr::pivot_longer( 
+                             cols = 1:(ncol(data_filt)-3), 
+                             names_to = "State", 
+                             values_to = "Abundance")
+  
+  plot <- ggplot(data_filt, aes(x = Group, y = Abundance, fill = Group)) +
+    geom_boxplot(position = "dodge2", aes(fill = Group)) + 
+    theme_classic() + 
+    ggpubr::stat_compare_means(hide.ns = T, vjust = 1.1) +
+    facet_wrap(~State, scale = "free_y")
+  
+  markers <- rbind(markers, data.frame("Data" = "Ecotyper", "Marker" = unique(data_filt$State), "Drug" = "HER2 Inhibitor"))
+  
+  her2_plot_list[[i]] <- plot
+  i <- i + 1
+    
+}
+```
+
+```{r}
+am_plot_list = list()
+i <- 1
+for (subtype in c("HR+/HER2-", "HR-/HER2-")){
+  data <- sa_df
+  data$Group <- NA
+  data$Group[rownames(data) %in% gsub("[^[:alnum:] ]", "", notreatment2$`specimenID/accessionID`)] <- "Naive"
+  data$Group[rownames(data) %in% gsub("[^[:alnum:] ]", "", subset(clin, `Duration of Chemotherapy (Antimetabolite)` >= 30)$ID)] <- "Antimetabolite"
+  
+  data <- na.omit(data)
+
+  clin3 <- subset(clin2, ID %in% row.names(data))
+  data <- data[clin3$ID,]
+  
+  data$Subtype <- clin3$Subtype
+  data <- subset(data, Subtype == subtype)[,-ncol(data)]
+  # hormone vs nontreated
+  set.seed(1)
+  fit1 <- cv.glmnet(as.matrix(data[,-ncol(data)]), 
+                    data$Group, family = "binomial", alpha = 1)
+  coef_matrix <- as.matrix(coef(fit1, s = "lambda.min"))
+  non_zero_vars <- coef_matrix[coef_matrix[, 1] != 0, ]
+  non_zero_df <- data.frame("Val" = as.numeric(non_zero_vars), "Name" = names(non_zero_vars))
+  non_zero_df <- non_zero_df[order(-non_zero_df$Val),]
+  selected_variables <- names(non_zero_vars)[names(non_zero_vars) != "(Intercept)"]
+  
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("Unknown", selected_variables)])
+
+  
+  data_filt <- data[, selected_variables]
+  data_filt$Group <- data$Group
+  data_filt$Subtype <- subtype
+  data_filt <- na.omit(data_filt)
+
+  data_filt <- data_filt %>% tidyr::pivot_longer( 
+                             cols = 1:(ncol(data_filt)-3), 
+                             names_to = "State", 
+                             values_to = "Abundance")
+  
+  plot <- ggplot(data_filt, aes(x = Group, y = Abundance, fill = Group)) +
+    geom_boxplot(position = "dodge2", aes(fill = Group)) + 
+    theme_classic() + 
+    ggpubr::stat_compare_means(hide.ns = T, vjust = 1.1) +
+    facet_wrap(~State, scale = "free_y")
+  
+  markers <- rbind(markers, data.frame("Data" = "Ecotyper", "Marker" = unique(data_filt$State), "Drug" = "Antimetabolite"))
+  
+  am_plot_list[[i]] <- plot
+  i <- i + 1
+    
+}
+```
+
+```{r}
+aa_plot_list = list()
+i <- 1
+for (subtype in c("HR+/HER2-")){
+  data <- sa_df
+  data$Group <- NA
+  data$Group[rownames(data) %in% gsub("[^[:alnum:] ]", "", notreatment2$`specimenID/accessionID`)] <- "Naive"
+  data$Group[rownames(data) %in% gsub("[^[:alnum:] ]", "", subset(clin, `Duration of Chemotherapy (Alkylating Agent)` >= 30)$ID)] <- "Alkylating Agent"
+  
+  data <- na.omit(data)
+
+  clin3 <- subset(clin2, ID %in% row.names(data))
+  data <- data[clin3$ID,]
+  
+  data$Subtype <- clin3$Subtype
+  data <- subset(data, Subtype == subtype)[,-ncol(data)]
+  # hormone vs nontreated
+  set.seed(1)
+  fit1 <- cv.glmnet(as.matrix(data[,-ncol(data)]), 
+                    data$Group, family = "binomial", alpha = 1)
+  coef_matrix <- as.matrix(coef(fit1, s = "lambda.min"))
+  non_zero_vars <- coef_matrix[coef_matrix[, 1] != 0, ]
+  non_zero_df <- data.frame("Val" = as.numeric(non_zero_vars), "Name" = names(non_zero_vars))
+  non_zero_df <- non_zero_df[order(-non_zero_df$Val),]
+  selected_variables <- names(non_zero_vars)[names(non_zero_vars) != "(Intercept)"]
+  
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("Unknown", selected_variables)])
+
+  
+  data_filt <- data[, selected_variables]
+  data_filt$Group <- data$Group
+  data_filt$Subtype <- subtype
+  data_filt <- na.omit(data_filt)
+
+  data_filt <- data_filt %>% tidyr::pivot_longer( 
+                             cols = 1:(ncol(data_filt)-3), 
+                             names_to = "State", 
+                             values_to = "Abundance")
+  
+  plot <- ggplot(data_filt, aes(x = Group, y = Abundance, fill = Group)) +
+    geom_boxplot(position = "dodge2", aes(fill = Group)) + 
+    theme_classic() + 
+    ggpubr::stat_compare_means(hide.ns = T, vjust = 1.1) +
+    facet_wrap(~State, scale = "free_y")
+  
+  markers <- rbind(markers, data.frame("Data" = "Ecotyper", "Marker" = unique(data_filt$State), "Drug" = "Alkylating Agent"))
+  
+  aa_plot_list[[i]] <- plot
+  i <- i + 1
+    
+}
+```
+
+```{r}
+pb_plot_list = list()
+i <- 1
+for (subtype in c("HR+/HER2-")){
+  data <- sa_df
+  data$Group <- NA
+  data$Group[rownames(data) %in% gsub("[^[:alnum:] ]", "", notreatment2$`specimenID/accessionID`)] <- "Naive"
+  data$Group[rownames(data) %in% gsub("[^[:alnum:] ]", "", subset(clin, `Duration of Chemotherapy (Platinum Based)` >= 30)$ID)] <- "Platinum-Based"
+  
+  data <- na.omit(data)
+
+  clin3 <- subset(clin2, ID %in% row.names(data))
+  data <- data[clin3$ID,]
+  
+  data$Subtype <- clin3$Subtype
+  data <- subset(data, Subtype == subtype)[,-ncol(data)]
+  # hormone vs nontreated
+  set.seed(1)
+  fit1 <- cv.glmnet(as.matrix(data[,-ncol(data)]), 
+                    data$Group, family = "binomial", alpha = 1)
+  coef_matrix <- as.matrix(coef(fit1, s = "lambda.min"))
+  non_zero_vars <- coef_matrix[coef_matrix[, 1] != 0, ]
+  non_zero_df <- data.frame("Val" = as.numeric(non_zero_vars), "Name" = names(non_zero_vars))
+  non_zero_df <- non_zero_df[order(-non_zero_df$Val),]
+  selected_variables <- names(non_zero_vars)[names(non_zero_vars) != "(Intercept)"]
+  
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("Unknown", selected_variables)])
+
+  
+  data_filt <- data[, selected_variables]
+  data_filt$Group <- data$Group
+  data_filt$Subtype <- subtype
+  data_filt <- na.omit(data_filt)
+
+  data_filt <- data_filt %>% tidyr::pivot_longer( 
+                             cols = 1:(ncol(data_filt)-3), 
+                             names_to = "State", 
+                             values_to = "Abundance")
+  
+  plot <- ggplot(data_filt, aes(x = Group, y = Abundance, fill = Group)) +
+    geom_boxplot(position = "dodge2", aes(fill = Group)) + 
+    theme_classic() + 
+    ggpubr::stat_compare_means(hide.ns = T, vjust = 1.1) +
+    facet_wrap(~State, scale = "free_y")
+  
+  markers <- rbind(markers, data.frame("Data" = "Ecotyper", "Marker" = unique(data_filt$State), "Drug" = "Platinum-Based"))
+  
+  pb_plot_list[[i]] <- plot
+  i <- i + 1
+    
+}
+```
+
+```{r}
+antra_plot_list = list()
+i <- 1
+for (subtype in c("HR+/HER2-")){
+  data <- sa_df
+  data$Group <- NA
+  data$Group[rownames(data) %in% gsub("[^[:alnum:] ]", "", notreatment2$`specimenID/accessionID`)] <- "Naive"
+  data$Group[rownames(data) %in% gsub("[^[:alnum:] ]", "", subset(clin, `Duration of Chemotherapy (Antracycline)` >= 30)$ID)] <- "Antracycline"
+  
+  data <- na.omit(data)
+
+  clin3 <- subset(clin2, ID %in% row.names(data))
+  data <- data[clin3$ID,]
+  
+  data$Subtype <- clin3$Subtype
+  data <- subset(data, Subtype == subtype)[,-ncol(data)]
+  # hormone vs nontreated
+  set.seed(1)
+  fit1 <- cv.glmnet(as.matrix(data[,-ncol(data)]), 
+                    data$Group, family = "binomial", alpha = 1)
+  coef_matrix <- as.matrix(coef(fit1, s = "lambda.min"))
+  non_zero_vars <- coef_matrix[coef_matrix[, 1] != 0, ]
+  non_zero_df <- data.frame("Val" = as.numeric(non_zero_vars), "Name" = names(non_zero_vars))
+  non_zero_df <- non_zero_df[order(-non_zero_df$Val),]
+  selected_variables <- names(non_zero_vars)[names(non_zero_vars) != "(Intercept)"]
+  
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("Unknown", selected_variables)])
+
+  
+  data_filt <- data[, selected_variables]
+  data_filt$Group <- data$Group
+  data_filt$Subtype <- subtype
+  data_filt <- na.omit(data_filt)
+
+  data_filt <- data_filt %>% tidyr::pivot_longer( 
+                             cols = 1:(ncol(data_filt)-3), 
+                             names_to = "State", 
+                             values_to = "Abundance")
+  
+  plot <- ggplot(data_filt, aes(x = Group, y = Abundance, fill = Group)) +
+    geom_boxplot(position = "dodge2", aes(fill = Group)) + 
+    theme_classic() + 
+    ggpubr::stat_compare_means(hide.ns = T, vjust = 1.1) +
+    facet_wrap(~State, scale = "free_y")
+  
+  markers <- rbind(markers, data.frame("Data" = "Ecotyper", "Marker" = unique(data_filt$State), "Drug" = "Antracycline"))
+  
+  antra_plot_list[[i]] <- plot
+  i <- i + 1
+    
+}
+```
+
+```{r}
+taxane_plot_list = list()
+i <- 1
+for (subtype in c("HR+/HER2-")){
+  data <- sa_df
+  data$Group <- NA
+  data$Group[rownames(data) %in% gsub("[^[:alnum:] ]", "", notreatment2$`specimenID/accessionID`)] <- "Naive"
+  data$Group[rownames(data) %in% gsub("[^[:alnum:] ]", "", subset(clin, `Duration of Chemotherapy (Taxane)` >= 30)$ID)] <- "Taxane"
+  
+  data <- na.omit(data)
+
+  clin3 <- subset(clin2, ID %in% row.names(data))
+  data <- data[clin3$ID,]
+  
+  data$Subtype <- clin3$Subtype
+  data <- subset(data, Subtype == subtype)[,-ncol(data)]
+  # hormone vs nontreated
+  set.seed(1)
+  fit1 <- cv.glmnet(as.matrix(data[,-ncol(data)]), 
+                    data$Group, family = "binomial", alpha = 1)
+  coef_matrix <- as.matrix(coef(fit1, s = "lambda.min"))
+  non_zero_vars <- coef_matrix[coef_matrix[, 1] != 0, ]
+  non_zero_df <- data.frame("Val" = as.numeric(non_zero_vars), "Name" = names(non_zero_vars))
+  non_zero_df <- non_zero_df[order(-non_zero_df$Val),]
+  selected_variables <- names(non_zero_vars)[names(non_zero_vars) != "(Intercept)"]
+  
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("Unknown", selected_variables)])
+
+  
+  data_filt <- data[, selected_variables]
+  data_filt$Group <- data$Group
+  data_filt$Subtype <- subtype
+  data_filt <- na.omit(data_filt)
+
+  data_filt <- data_filt %>% tidyr::pivot_longer( 
+                             cols = 1:(ncol(data_filt)-3), 
+                             names_to = "State", 
+                             values_to = "Abundance")
+  
+  plot <- ggplot(data_filt, aes(x = Group, y = Abundance, fill = Group)) +
+    geom_boxplot(position = "dodge2", aes(fill = Group)) + 
+    theme_classic() + 
+    ggpubr::stat_compare_means(hide.ns = T, vjust = 1.1) +
+    facet_wrap(~State, scale = "free_y")
+  
+  markers <- rbind(markers, data.frame("Data" = "Ecotyper", "Marker" = unique(data_filt$State), "Drug" = "Taxane"))
+  
+  taxane_plot_list[[i]] <- plot
+  i <- i + 1
+    
+}
+```
+
+ssGSEA pathway scores
+
+```{r}
+library(ggplot2)
+library(limma)
+library(GSVA)
+library(msigdbr)
+library(dplyr)
+library(GSEABase)
+library(sva)
+```
+
+
+```{r}
+rna <- read.csv("rnaseq.csv")
+genes <- rna$X
+rna <- rna[,-1]
+rna <- data.frame(apply(rna, 2, as.numeric))
+rna <- log2(rna + 0.0001)
+rownames(rna) <- genes
+colnames(rna) <- gsub("X.", "/", colnames(rna))
+
+
+# calculate ssGSEA scores for Hallmark and KEGG
+
+hallmark_gene_sets <- msigdbr(
+  species = "Homo sapiens", # Can change this to what species you need
+  collection = "H" # Only hallmark gene sets
+)
+
+hallmarks_list <- split(
+  hallmark_gene_sets$gene_symbol,
+  hallmark_gene_sets$gs_name
+)
+
+expression_matrix <- as.matrix(rna)
+
+gsvapar <- ssgseaParam(exprData = expression_matrix,
+                                    geneSets = hallmarks_list,
+                                    minSize = 1, maxSize = Inf,
+                                    alpha = 0.25, normalize = T)
+
+gsea_results <- gsva(param = gsvapar)
+
+hallmark_scores <- as.data.frame(gsea_results)
+
+c2_gene_sets <- msigdbr(
+  species = "Homo sapiens",
+  collection = "C2"
+)
+
+c2_list <- split(
+  c2_gene_sets$gene_symbol,
+  c2_gene_sets$gs_name
+)
+
+gsvapar <- ssgseaParam(exprData = expression_matrix,
+                       geneSets = c2_list,
+                       minSize = 1, maxSize = Inf,
+                       alpha = 0.25, normalize = T)
+
+gsea_results <- gsva(param = gsvapar)
+
+c2_scores <- as.data.frame(gsea_results)
+
+c6_gene_sets <- msigdbr(
+  species = "Homo sapiens", # Can change this to what species you need
+  collection = "C6"
+)
+
+c6_list <- split(
+  c6_gene_sets$gene_symbol,
+  c6_gene_sets$gs_name
+)
+
+gsvapar <- ssgseaParam(exprData = expression_matrix,
+                       geneSets = c6_list,
+                       minSize = 1, maxSize = Inf,
+                       alpha = 0.25, normalize = T)
+
+gsea_results <- gsva(param = gsvapar)
+
+c6_scores <- as.data.frame(gsea_results)
+
+hallmark_scores2 <- as.data.frame(t(hallmark_scores))
+c2_scores2 <- as.data.frame(t(c2_scores))
+c6_scores2 <- as.data.frame(t(c6_scores))
+
+hallmark_scores2$ID <- rownames(hallmark_scores2)
+c2_scores2$ID <- rownames(c2_scores2)
+c6_scores2$ID <- rownames(c6_scores2)
+```
+
+
+```{r}
+df <- merge(hallmark_scores2, c2_scores2, by = "ID")
+df <- merge(df, c6_scores2, by = "ID")
+
+rownames(df) <- df$ID
+df <- df[,-1]
+pathway_list = list()
+i <- 1
+for (subtype in c("HR+/HER2-")){
+  data <- df
+  data$Group <- NA
+  data$Group[rownames(data) %in% notreatment2$`specimenID/accessionID`] <- "Naive"
+  data$Group[rownames(data) %in% endocrine_only$ID] <- "Hormone"
+  
+  data <- na.omit(data)
+
+  clin3 <- subset(all_data2, ID %in% row.names(data))
+  data <- data[clin3$ID,]
+  
+  data$Subtype <- clin3$Subtype
+  data <- subset(data, Subtype == subtype)[,-ncol(data)]
+  # hormone vs nontreated
+  set.seed(1)
+  fit1 <- cv.glmnet(as.matrix(data[,-ncol(data)]), 
+                    data$Group, family = "binomial", alpha = 1)
+  coef_matrix <- as.matrix(coef(fit1, s = "lambda.min"))
+  non_zero_vars <- coef_matrix[coef_matrix[, 1] != 0, ]
+  non_zero_df <- data.frame("Val" = as.numeric(non_zero_vars), "Name" = names(non_zero_vars))
+  non_zero_df <- non_zero_df[order(-non_zero_df$Val),]
+  selected_variables <- names(non_zero_vars)[names(non_zero_vars) != "(Intercept)"]
+  
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("Unknown", selected_variables)])
+  
+  if (length(selected_variables) > 20){
+    print(selected_variables)
+    non_zero_df$abs <- abs(non_zero_df$Val)
+    non_zero_df <- subset(non_zero_df, Name != "(Intercept)")
+    non_zero_df <- non_zero_df[order(-non_zero_df$abs),]
+    selected_variables <- non_zero_df$Name[1:20]
+  }
+
+  
+  data_filt <- data[, selected_variables]
+  data_filt$Group <- data$Group
+  data_filt$Subtype <- subtype
+  data_filt <- na.omit(data_filt)
+
+  data_filt <- data_filt %>% tidyr::pivot_longer( 
+                             cols = 1:(ncol(data_filt)-2), 
+                             names_to = "Pathway", 
+                             values_to = "ssGSEA_Score")
+  
+  
+  
+  plot <- ggplot(data_filt, aes(x = Group, y = ssGSEA_Score, fill = Group)) +
+    geom_boxplot(position = "dodge2", aes(fill = Group)) + 
+    theme_classic() + 
+    ggpubr::stat_compare_means(hide.ns = T, vjust = 1.1) +
+    facet_wrap(~Pathway, scale = "free_y") +
+    theme(strip.text = element_text(size = 5))
+  
+  markers <- rbind(markers, data.frame("Data" = "GSEA", "Marker" = unique(data_filt$Pathway), "Drug" = "Hormone Therapy"))
+  
+  pathway_list[[i]] <- plot
+  i <- i + 1
+    
+}
+```
+
+```{r}
+cdk_pathway_list = list()
+i <- 1
+for (subtype in c("HR+/HER2-")){
+  data <- df
+  data$Group <- NA
+  data$Group[rownames(data) %in% notreatment2$`specimenID/accessionID`] <- "Naive"
+  data$Group[rownames(data) %in% cdk$ID] <- "CDK Inhibitor"
+  
+  data <- na.omit(data)
+
+  clin3 <- subset(all_data2, ID %in% row.names(data))
+  data <- data[clin3$ID,]
+  
+  data$Subtype <- clin3$Subtype
+  data <- subset(data, Subtype == subtype)[,-ncol(data)]
+  # hormone vs nontreated
+  set.seed(1)
+  fit1 <- cv.glmnet(as.matrix(data[,-ncol(data)]), 
+                    data$Group, family = "binomial", alpha = 1)
+  coef_matrix <- as.matrix(coef(fit1, s = "lambda.min"))
+  non_zero_vars <- coef_matrix[coef_matrix[, 1] != 0, ]
+  non_zero_df <- data.frame("Val" = as.numeric(non_zero_vars), "Name" = names(non_zero_vars))
+  non_zero_df <- non_zero_df[order(-non_zero_df$Val),]
+  selected_variables <- names(non_zero_vars)[names(non_zero_vars) != "(Intercept)"]
+  
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("Unknown", selected_variables)])
+  
+  if (length(selected_variables) > 20){
+    print(selected_variables)
+    non_zero_df$abs <- abs(non_zero_df$Val)
+    non_zero_df <- subset(non_zero_df, Name != "(Intercept)")
+    non_zero_df <- non_zero_df[order(-non_zero_df$abs),]
+    selected_variables <- non_zero_df$Name[1:20]
+  }
+
+  
+  data_filt <- data[, selected_variables]
+  data_filt$Group <- data$Group
+  data_filt$Subtype <- subtype
+  data_filt <- na.omit(data_filt)
+
+  data_filt <- data_filt %>% tidyr::pivot_longer( 
+                             cols = 1:(ncol(data_filt)-2), 
+                             names_to = "Pathway", 
+                             values_to = "ssGSEA_Score")
+  
+  
+  
+  plot <- ggplot(data_filt, aes(x = Group, y = ssGSEA_Score, fill = Group)) +
+    geom_boxplot(position = "dodge2", aes(fill = Group)) + 
+    theme_classic() + 
+    ggpubr::stat_compare_means(hide.ns = T, vjust = 1.1) +
+    facet_wrap(~Pathway, scale = "free_y") +
+    theme(strip.text = element_text(size = 5))
+  
+  markers <- rbind(markers, data.frame("Data" = "GSEA", "Marker" = unique(data_filt$Pathway), "Drug" = "CDK Inhibitor"))
+  
+  cdk_pathway_list[[i]] <- plot
+  i <- i + 1
+    
+}
+```
+
+```{r}
+aa_pathway_list = list()
+i <- 1
+for (subtype in c("HR+/HER2-", "HR-/HER2-")){
+  data <- df
+  data$Group <- NA
+  data$Group[rownames(data) %in% notreatment2$`specimenID/accessionID`] <- "Naive"
+  data$Group[rownames(data) %in% subset(clin, `Duration of Chemotherapy (Alkylating Agent)` >= 30)$ID] <- "Alkylating Agent"
+  
+  data <- na.omit(data)
+
+  clin3 <- subset(all_data2, ID %in% row.names(data))
+  data <- data[clin3$ID,]
+  
+  data$Subtype <- clin3$Subtype
+  data <- subset(data, Subtype == subtype)[,-ncol(data)]
+  # hormone vs nontreated
+  set.seed(1)
+  fit1 <- cv.glmnet(as.matrix(data[,-ncol(data)]), 
+                    data$Group, family = "binomial", alpha = 1)
+  coef_matrix <- as.matrix(coef(fit1, s = "lambda.min"))
+  non_zero_vars <- coef_matrix[coef_matrix[, 1] != 0, ]
+  non_zero_df <- data.frame("Val" = as.numeric(non_zero_vars), "Name" = names(non_zero_vars))
+  non_zero_df <- non_zero_df[order(-non_zero_df$Val),]
+  selected_variables <- names(non_zero_vars)[names(non_zero_vars) != "(Intercept)"]
+  
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("Unknown", selected_variables)])
+
+  if (length(selected_variables) > 20){
+    non_zero_df$abs <- abs(non_zero_df$Val)
+    non_zero_df <- subset(non_zero_df, Name != "(Intercept)")
+    non_zero_df <- non_zero_df[order(-non_zero_df$abs),]
+    selected_variables <- non_zero_df$Name[1:20]
+  }
+
+  
+  data_filt <- data[, selected_variables]
+  data_filt$Group <- data$Group
+  data_filt$Subtype <- subtype
+  data_filt <- na.omit(data_filt)
+
+  data_filt <- data_filt %>% tidyr::pivot_longer( 
+                             cols = 1:(ncol(data_filt)-2), 
+                             names_to = "Pathway", 
+                             values_to = "ssGSEA_Score")
+  
+  
+  
+  plot <- ggplot(data_filt, aes(x = Group, y = ssGSEA_Score, fill = Group)) +
+    geom_boxplot(position = "dodge2", aes(fill = Group)) + 
+    theme_classic() + 
+    ggpubr::stat_compare_means(hide.ns = T, vjust = 1.1) +
+    facet_wrap(~Pathway, scale = "free_y") +
+    theme(strip.text = element_text(size = 5))
+  
+  markers <- rbind(markers, data.frame("Data" = "GSEA", "Marker" = unique(data_filt$Pathway), "Drug" = "Alkylating Agent"))
+  
+  aa_pathway_list[[i]] <- plot
+  i <- i + 1
+    
+}
+```
+
+```{r}
+antra_pathway_list = list()
+i <- 1
+for (subtype in c("HR+/HER2-", "HR-/HER2-")){
+  data <- df
+  data$Group <- NA
+  data$Group[rownames(data) %in% notreatment2$`specimenID/accessionID`] <- "Naive"
+  data$Group[rownames(data) %in% subset(clin, `Duration of Chemotherapy (Antracycline)` >= 30)$ID] <- "Antracycline"
+  
+  data <- na.omit(data)
+
+  clin3 <- subset(all_data2, ID %in% row.names(data))
+  data <- data[clin3$ID,]
+  
+  data$Subtype <- clin3$Subtype
+  data <- subset(data, Subtype == subtype)[,-ncol(data)]
+  # hormone vs nontreated
+  set.seed(1)
+  fit1 <- cv.glmnet(as.matrix(data[,-ncol(data)]), 
+                    data$Group, family = "binomial", alpha = 1)
+  coef_matrix <- as.matrix(coef(fit1, s = "lambda.min"))
+  non_zero_vars <- coef_matrix[coef_matrix[, 1] != 0, ]
+  non_zero_df <- data.frame("Val" = as.numeric(non_zero_vars), "Name" = names(non_zero_vars))
+  non_zero_df <- non_zero_df[order(-non_zero_df$Val),]
+  selected_variables <- names(non_zero_vars)[names(non_zero_vars) != "(Intercept)"]
+  
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("Unknown", selected_variables)])
+
+  if (length(selected_variables) > 20){
+    print(selected_variables)
+    non_zero_df$abs <- abs(non_zero_df$Val)
+    non_zero_df <- subset(non_zero_df, Name != "(Intercept)")
+    non_zero_df <- non_zero_df[order(-non_zero_df$abs),]
+    selected_variables <- non_zero_df$Name[1:20]
+  }
+
+  
+  data_filt <- data[, selected_variables]
+  data_filt$Group <- data$Group
+  data_filt$Subtype <- subtype
+  data_filt <- na.omit(data_filt)
+
+  data_filt <- data_filt %>% tidyr::pivot_longer( 
+                             cols = 1:(ncol(data_filt)-2), 
+                             names_to = "Pathway", 
+                             values_to = "ssGSEA_Score")
+  
+  
+  
+  plot <- ggplot(data_filt, aes(x = Group, y = ssGSEA_Score, fill = Group)) +
+    geom_boxplot(position = "dodge2", aes(fill = Group)) + 
+    theme_classic() + 
+    ggpubr::stat_compare_means(hide.ns = T, vjust = 1.1) +
+    facet_wrap(~Pathway, scale = "free_y") +
+    theme(strip.text = element_text(size = 5))
+  
+  markers <- rbind(markers, data.frame("Data" = "GSEA", "Marker" = unique(data_filt$Pathway), "Drug" = "Antracycline"))
+  
+  antra_pathway_list[[i]] <- plot
+  i <- i + 1
+    
+}
+```
+
+```{r}
+am_pathway_list = list()
+i <- 1
+for (subtype in c("HR+/HER2-","HR-/HER2-")){
+  data <- df
+  data$Group <- NA
+  data$Group[rownames(data) %in% notreatment2$`specimenID/accessionID`] <- "Naive"
+  data$Group[rownames(data) %in% subset(clin, `Duration of Chemotherapy (Antimetabolite)` >= 30)$ID] <- "Antimetabolite"
+  
+  data <- na.omit(data)
+
+  clin3 <- subset(all_data2, ID %in% row.names(data))
+  data <- data[clin3$ID,]
+  
+  data$Subtype <- clin3$Subtype
+  data <- subset(data, Subtype == subtype)[,-ncol(data)]
+  # hormone vs nontreated
+  set.seed(1)
+  fit1 <- cv.glmnet(as.matrix(data[,-ncol(data)]), 
+                    data$Group, family = "binomial", alpha = 1)
+  coef_matrix <- as.matrix(coef(fit1, s = "lambda.min"))
+  non_zero_vars <- coef_matrix[coef_matrix[, 1] != 0, ]
+  non_zero_df <- data.frame("Val" = as.numeric(non_zero_vars), "Name" = names(non_zero_vars))
+  non_zero_df <- non_zero_df[order(-non_zero_df$Val),]
+  selected_variables <- names(non_zero_vars)[names(non_zero_vars) != "(Intercept)"]
+  
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("Unknown", selected_variables)])
+
+  print(selected_variables)
+  if (length(selected_variables) > 20){
+    
+    non_zero_df$abs <- abs(non_zero_df$Val)
+    non_zero_df <- subset(non_zero_df, Name != "(Intercept)")
+    non_zero_df <- non_zero_df[order(-non_zero_df$abs),]
+    selected_variables <- non_zero_df$Name[1:20]
+  }
+
+  
+  data_filt <- data[, selected_variables]
+  data_filt$Group <- data$Group
+  data_filt$Subtype <- subtype
+  data_filt <- na.omit(data_filt)
+
+  data_filt <- data_filt %>% tidyr::pivot_longer( 
+                             cols = 1:(ncol(data_filt)-2), 
+                             names_to = "Pathway", 
+                             values_to = "ssGSEA_Score")
+  
+  
+  
+  plot <- ggplot(data_filt, aes(x = Group, y = ssGSEA_Score, fill = Group)) +
+    geom_boxplot(position = "dodge2", aes(fill = Group)) + 
+    theme_classic() + 
+    ggpubr::stat_compare_means(hide.ns = T, vjust = 1.1) +
+    facet_wrap(~Pathway, scale = "free_y") +
+    theme(strip.text = element_text(size = 5))
+  
+  markers <- rbind(markers, data.frame("Data" = "GSEA", "Marker" = unique(data_filt$Pathway), "Drug" = "Antimetabolite"))
+  
+  am_pathway_list[[i]] <- plot
+  i <- i + 1
+    
+}
+```
+
+```{r}
+pb_pathway_list = list()
+i <- 1
+for (subtype in c("HR+/HER2-", "HR-/HER2+", "HR-/HER2-")){
+  data <- df
+  data$Group <- NA
+  data$Group[rownames(data) %in% notreatment2$`specimenID/accessionID`] <- "Naive"
+  data$Group[rownames(data) %in% subset(clin, `Duration of Chemotherapy (Platinum Based)` >= 30)$ID] <- "Platinum-Based"
+  
+  data <- na.omit(data)
+
+  clin3 <- subset(all_data2, ID %in% row.names(data))
+  data <- data[clin3$ID,]
+  
+  data$Subtype <- clin3$Subtype
+  data <- subset(data, Subtype == subtype)[,-ncol(data)]
+  # hormone vs nontreated
+  set.seed(1)
+  fit1 <- cv.glmnet(as.matrix(data[,-ncol(data)]), 
+                    data$Group, family = "binomial", alpha = 1)
+  coef_matrix <- as.matrix(coef(fit1, s = "lambda.min"))
+  non_zero_vars <- coef_matrix[coef_matrix[, 1] != 0, ]
+  non_zero_df <- data.frame("Val" = as.numeric(non_zero_vars), "Name" = names(non_zero_vars))
+  non_zero_df <- non_zero_df[order(-non_zero_df$Val),]
+  selected_variables <- names(non_zero_vars)[names(non_zero_vars) != "(Intercept)"]
+  
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("Unknown", selected_variables)])
+
+  print(selected_variables)
+  if (length(selected_variables) > 20){
+    
+    non_zero_df$abs <- abs(non_zero_df$Val)
+    non_zero_df <- subset(non_zero_df, Name != "(Intercept)")
+    non_zero_df <- non_zero_df[order(-non_zero_df$abs),]
+    selected_variables <- non_zero_df$Name[1:20]
+  }
+
+  
+  data_filt <- data[, selected_variables]
+  data_filt$Group <- data$Group
+  data_filt$Subtype <- subtype
+  data_filt <- na.omit(data_filt)
+
+  data_filt <- data_filt %>% tidyr::pivot_longer( 
+                             cols = 1:(ncol(data_filt)-2), 
+                             names_to = "Pathway", 
+                             values_to = "ssGSEA_Score")
+  
+  
+  
+  plot <- ggplot(data_filt, aes(x = Group, y = ssGSEA_Score, fill = Group)) +
+    geom_boxplot(position = "dodge2", aes(fill = Group)) + 
+    theme_classic() + 
+    ggpubr::stat_compare_means(hide.ns = T, vjust = 1.1) +
+    facet_wrap(~Pathway, scale = "free_y") +
+    theme(strip.text = element_text(size = 5))
+  
+  markers <- rbind(markers, data.frame("Data" = "GSEA", "Marker" = unique(data_filt$Pathway), "Drug" = "Platinum-Based"))
+  
+  pb_pathway_list[[i]] <- plot
+  i <- i + 1
+    
+}
+```
+
+```{r}
+taxane_pathway_list = list()
+i <- 1
+for (subtype in c("HR+/HER2-", "HR-/HER2-")){
+  data <- df
+  data$Group <- NA
+  data$Group[rownames(data) %in% notreatment2$`specimenID/accessionID`] <- "Naive"
+  data$Group[rownames(data) %in% subset(clin, `Duration of Chemotherapy (Taxane)` >= 30)$ID] <- "Taxane"
+  
+  data <- na.omit(data)
+
+  clin3 <- subset(all_data2, ID %in% row.names(data))
+  data <- data[clin3$ID,]
+  
+  data$Subtype <- clin3$Subtype
+  data <- subset(data, Subtype == subtype)[,-ncol(data)]
+  # hormone vs nontreated
+  set.seed(1)
+  fit1 <- cv.glmnet(as.matrix(data[,-ncol(data)]), 
+                    data$Group, family = "binomial", alpha = 1)
+  coef_matrix <- as.matrix(coef(fit1, s = "lambda.min"))
+  non_zero_vars <- coef_matrix[coef_matrix[, 1] != 0, ]
+  non_zero_df <- data.frame("Val" = as.numeric(non_zero_vars), "Name" = names(non_zero_vars))
+  non_zero_df <- non_zero_df[order(-non_zero_df$Val),]
+  selected_variables <- names(non_zero_vars)[names(non_zero_vars) != "(Intercept)"]
+  
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("Unknown", selected_variables)])
+
+  
+  if (length(selected_variables) > 20){
+    print(selected_variables)
+    non_zero_df$abs <- abs(non_zero_df$Val)
+    non_zero_df <- subset(non_zero_df, Name != "(Intercept)")
+    non_zero_df <- non_zero_df[order(-non_zero_df$abs),]
+    selected_variables <- non_zero_df$Name[1:20]
+  }
+
+  
+  data_filt <- data[, selected_variables]
+  data_filt$Group <- data$Group
+  data_filt$Subtype <- subtype
+  data_filt <- na.omit(data_filt)
+
+  data_filt <- data_filt %>% tidyr::pivot_longer( 
+                             cols = 1:(ncol(data_filt)-2), 
+                             names_to = "Pathway", 
+                             values_to = "ssGSEA_Score")
+  
+  
+  data_filt$Group <- factor(data_filt$Group, levels = c("Taxane", "Naive"))
+  plot <- ggplot(data_filt, aes(x = Group, y = ssGSEA_Score, fill = Group)) +
+    geom_boxplot(position = "dodge2", aes(fill = Group)) + 
+    theme_classic() + 
+    ggpubr::stat_compare_means(hide.ns = T, vjust = 1.1) +
+    facet_wrap(~Pathway, scale = "free_y") +
+    theme(strip.text = element_text(size = 5))
+  
+  markers <- rbind(markers, data.frame("Data" = "GSEA", "Marker" = unique(data_filt$Pathway), "Drug" = "Taxane"))
+  
+  taxane_pathway_list[[i]] <- plot
+  i <- i + 1
+    
+}
+```
+
+```{r}
+her2_pathway_list = list()
+i <- 1
+for (subtype in c("HR+/HER2+", "HR-/HER2+")){
+  data <- df
+  data$Group <- NA
+  data$Group[rownames(data) %in% notreatment2$`specimenID/accessionID`] <- "Naive"
+  data$Group[rownames(data) %in% her2$ID] <- "HER2 Inhibitor"
+  
+  data <- na.omit(data)
+
+  clin3 <- subset(all_data2, ID %in% row.names(data))
+  data <- data[clin3$ID,]
+  
+  data$Subtype <- clin3$Subtype
+  data <- subset(data, Subtype == subtype)[,-ncol(data)]
+  # hormone vs nontreated
+  set.seed(1)
+  fit1 <- cv.glmnet(as.matrix(data[,-ncol(data)]), 
+                    data$Group, family = "binomial", alpha = 1)
+  coef_matrix <- as.matrix(coef(fit1, s = "lambda.min"))
+  non_zero_vars <- coef_matrix[coef_matrix[, 1] != 0, ]
+  non_zero_df <- data.frame("Val" = as.numeric(non_zero_vars), "Name" = names(non_zero_vars))
+  non_zero_df <- non_zero_df[order(-non_zero_df$Val),]
+  selected_variables <- names(non_zero_vars)[names(non_zero_vars) != "(Intercept)"]
+  
+  selected_variables <- setdiff(selected_variables, selected_variables[grep("Unknown", selected_variables)])
+  print(selected_variables)
+  
+  data_filt <- data[, selected_variables]
+  data_filt$Group <- data$Group
+  data_filt$Subtype <- subtype
+  data_filt <- na.omit(data_filt)
+
+  data_filt <- data_filt %>% tidyr::pivot_longer( 
+                             cols = 1:(ncol(data_filt)-2), 
+                             names_to = "Pathway", 
+                             values_to = "ssGSEA_Score")
+  
+  plot <- ggplot(data_filt, aes(x = Group, y = ssGSEA_Score, fill = Group)) +
+    geom_boxplot(position = "dodge2", aes(fill = Group)) + 
+    theme_classic() + 
+    ggpubr::stat_compare_means(hide.ns = T, vjust = 1.1) +
+    facet_wrap(~Pathway, scale = "free_y")
+  
+  markers <- rbind(markers, data.frame("Data" = "GSEA", "Marker" = unique(data_filt$Pathway), "Drug" = "HER2 Inhibitor"))
+  
+  her2_pathway_list[[i]] <- plot
+  i <- i + 1
+    
+}
+```
+
+```{r}
+pal <- pal_observable("observable10", alpha = 0.9)(10)
+```
+
+Manucript plots for hormone comparison (Figure 3c)
+```{r}
+df <- merge(hallmark_scores2, c2_scores2, by = "ID")
+df <- merge(df, c6_scores2, by = "ID")
+
+rownames(df) <- df$ID
+df <- df[,-1]
+
+subtype <- "HR+/HER2-"
+data <- df
+data$Group <- NA
+data$Group[rownames(data) %in% notreatment2$`specimenID/accessionID`] <- "Naive"
+data$Group[rownames(data) %in% endocrine_only$ID] <- "Hormone"
+
+data <- na.omit(data)
+
+clin3 <- subset(all_data2, ID %in% row.names(data))
+data <- data[clin3$ID,]
+
+data$Subtype <- clin3$Subtype
+data <- subset(data, Subtype == subtype)[,-ncol(data)]
+
+selected_variables <- c("KEGG_MEDICUS_REFERENCE_IL1_IL1R_JNK_SIGNALING_PATHWAY",
+                        "MARTIN_NFKB_TARGETS_DN", 
+                        "TURJANSKI_MAPK11_TARGETS", "TURJANSKI_MAPK8_AND_MAPK9_TARGETS")
+  
+
+data_filt <- data[, selected_variables]
+data_filt$Group <- data$Group
+data_filt$Subtype <- subtype
+data_filt <- na.omit(data_filt)
+
+data_filt <- data_filt %>% tidyr::pivot_longer( 
+                           cols = 1:(ncol(data_filt)-2), 
+                           names_to = "Pathway", 
+                           values_to = "ssGSEA_Score")
+  
+  
+  
+hormone_pathways_plot <- ggplot(data_filt, aes(x = Group, y = ssGSEA_Score, fill = Group)) +
+  geom_violin(width=1, position = position_dodge(1), trim = FALSE, color = NA,
+              draw_quantiles = c(0.5), quantile.color = "white", quantile.linetype = 0) +
+  theme_classic() + 
+  ggpubr::stat_compare_means(hide.ns = T, vjust = 1.1) +
+  scale_fill_manual(values = c("Hormone" = pal[3], "Naive" = pal[1])) +
+  facet_wrap(~Pathway, scale = "free_y", nrow = 2, ncol = 2) +
+  theme(strip.text = element_text(size = 6))
+hormone_pathways_plot
+```
+
+```{r}
+
+subtype = "HR+/HER2-"
+data <- sa_df
+data$Group <- NA
+data$Group[rownames(data) %in% gsub("[^[:alnum:] ]", "", notreatment2$`specimenID/accessionID`)] <- "Naive"
+data$Group[rownames(data) %in% gsub("[^[:alnum:] ]", "", endocrine_only$ID)] <- "Hormone"
+
+data <- na.omit(data)
+
+clin3 <- subset(clin2, ID %in% row.names(data))
+data <- data[clin3$ID,]
+
+data$Subtype <- clin3$Subtype
+data <- subset(data, Subtype == subtype)[,-ncol(data)]
+
+selected_variables <- c("Dendritic.cells.Myeloid.cDC1..S01.",
+                        "Dendritic.cells.Myeloid.cDC2.B..Inflammatory...S02.",
+                        "Dendritic.cells.Mature..normal.enriched...S05.",
+                        "Dendritic.cells.Migratory.activated..S07.",
+                        "Mast.cells.Normal.enriched..S02.",
+                        "Mast.cells.Activated..S06.")
+
+  
+data_filt <- data[, selected_variables]
+data_filt$Group <- data$Group
+data_filt$Subtype <- subtype
+data_filt <- na.omit(data_filt)
+
+data_filt <- data_filt %>% tidyr::pivot_longer( 
+                           cols = 1:(ncol(data_filt)-2), 
+                           names_to = "State", 
+                           values_to = "Abundance")
+  
+hormone_state_plot <- ggplot(data_filt, aes(x = Group, y = Abundance, fill = Group)) +
+  geom_violin(width=1, position = position_dodge(1), trim = FALSE, color = NA,
+              draw_quantiles = c(0.5), quantile.color = "white", quantile.linetype = 0) +
+  theme_classic() + 
+  ggpubr::stat_compare_means(hide.ns = T, vjust = 1.1) +
+  scale_fill_manual(values = c("Hormone" = pal[3], "Naive" = pal[1])) +
+  facet_wrap(~State, scale = "free_y", nrow = 2, ncol = 3) +
+  theme(strip.text = element_text(size = 6))
+hormone_state_plot
+```
+
+```{r}
+ggpubr::ggarrange(hormone_pathways_plot, hormone_state_plot, ncol = 2, align = "hv", common.legend = T,
+                  widths = c(0.66, 1))
+```
+
+Plot SMARCB1 for Antimetabolite, alkylating Agent, Antracycline, and Taxane (Supplementary Figure)
+
+```{r}
+df <- merge(hallmark_scores2, c2_scores2, by = "ID")
+df <- merge(df, c6_scores2, by = "ID")
+
+rownames(df) <- df$ID
+df <- df[,-1]
+
+subtype <- "HR+/HER2-"
+data <- df
+data$Group <- NA
+data$Group[rownames(data) %in% notreatment2$`specimenID/accessionID`] <- "Naive"
+data$Group[rownames(data) %in% subset(clin, `Duration of Chemotherapy (Taxane)` >= 30)$ID] <- "Taxane"
+
+data <- na.omit(data)
+
+clin3 <- subset(all_data2, ID %in% row.names(data))
+data <- data[clin3$ID,]
+
+data$Subtype <- clin3$Subtype
+data <- subset(data, Subtype == subtype)[,-ncol(data)]
+
+selected_variables <- c("WP_TUMOR_SUPPRESSOR_ACTIVITY_OF_SMARCB1")
+  
+data_filt <- data[, c(selected_variables, "Group")]
+data_filt$Subtype <- subtype
+data_filt <- na.omit(data_filt)
+
+data <- df
+data$Group <- NA
+data$Group[rownames(data) %in% subset(clin, `Duration of Chemotherapy (Alkylating Agent)` >= 30)$ID] <- "Alkylating Agent"
+
+data <- na.omit(data)
+
+clin3 <- subset(all_data2, ID %in% row.names(data))
+data <- data[clin3$ID,]
+
+data$Subtype <- clin3$Subtype
+data <- subset(data, Subtype == subtype)[,-ncol(data)]
+
+selected_variables <- c("WP_TUMOR_SUPPRESSOR_ACTIVITY_OF_SMARCB1")
+
+data_filt2 <- data[, c(selected_variables, "Group")]
+data_filt2$Subtype <- subtype
+data_filt2 <- na.omit(data_filt2)
+data_filt <- rbind(data_filt, data_filt2)
+
+data <- df
+data$Group <- NA
+data$Group[rownames(data) %in% subset(clin, `Duration of Chemotherapy (Antimetabolite)` >= 30)$ID] <- "Antimetabolite"
+
+data <- na.omit(data)
+
+clin3 <- subset(all_data2, ID %in% row.names(data))
+data <- data[clin3$ID,]
+
+data$Subtype <- clin3$Subtype
+data <- subset(data, Subtype == subtype)[,-ncol(data)]
+
+selected_variables <- c("WP_TUMOR_SUPPRESSOR_ACTIVITY_OF_SMARCB1")
+
+data_filt2 <- data[, c(selected_variables, "Group")]
+data_filt2$Subtype <- subtype
+data_filt2 <- na.omit(data_filt2)
+data_filt <- rbind(data_filt, data_filt2)
+
+data <- df
+data$Group <- NA
+data$Group[rownames(data) %in% subset(clin, `Duration of Chemotherapy (Antracycline)` >= 30)$ID] <- "Antracycline"
+
+data <- na.omit(data)
+
+clin3 <- subset(all_data2, ID %in% row.names(data))
+data <- data[clin3$ID,]
+
+data$Subtype <- clin3$Subtype
+data <- subset(data, Subtype == subtype)[,-ncol(data)]
+
+selected_variables <- c("WP_TUMOR_SUPPRESSOR_ACTIVITY_OF_SMARCB1")
+
+data_filt2 <- data[, c(selected_variables, "Group")]
+data_filt2$Subtype <- subtype
+data_filt2 <- na.omit(data_filt2)
+data_filt <- rbind(data_filt, data_filt2)
+
+
+data_filt <- data_filt %>% tidyr::pivot_longer( 
+                           cols = 1:(ncol(data_filt)-2), 
+                           names_to = "Pathway", 
+                           values_to = "ssGSEA_Score")
+  
+data_filt$Group <- factor(data_filt$Group)
+data_filt$Group <- relevel(data_filt$Group, ref = "Naive")
+  
+smarcb1_pathways_plot <- ggplot(data_filt, aes(x = Group, y = ssGSEA_Score, fill = Group)) +
+  geom_violin(width=1, position = position_dodge(1), trim = FALSE, color = NA,
+              draw_quantiles = c(0.5), quantile.color = "white", quantile.linetype = 0) +
+  theme_classic() + 
+  ggpubr::stat_compare_means(comparisons = list(c("Naive", "Alkylating Agent"), c("Naive", "Antimetabolite"),
+                                                c("Naive", "Antracycline"), c("Naive", "Taxane")),
+                             hide.ns = T) +
+  scale_fill_manual(values = c("Naive" = pal[1], "Alkylating Agent" = pal[2], "Antimetabolite" = pal[3],
+                               "Antracycline" = pal[4], "Taxane" = pal[5])) +
+  facet_wrap(~Pathway, scale = "free_y") +
+  theme(strip.text = element_text(size = 6))
+smarcb1_pathways_plot
+```
+
+
+Manuscript plots Chemotherapy treated vs treatment-naive (Figure 3e-f)
+
+
+```{r}
+df <- merge(hallmark_scores2, c2_scores2, by = "ID")
+df <- merge(df, c6_scores2, by = "ID")
+
+rownames(df) <- df$ID
+df <- df[,-1]
+
+subtype <- "HR+/HER2-"
+data <- df
+data$Group <- NA
+data$Group[rownames(data) %in% notreatment2$`specimenID/accessionID`] <- "Naive"
+data$Group[rownames(data) %in% subset(clin, `Duration of Chemotherapy (Taxane)` >= 30)$ID] <- "Taxane"
+
+data <- na.omit(data)
+
+clin3 <- subset(all_data2, ID %in% row.names(data))
+data <- data[clin3$ID,]
+
+data$Subtype <- clin3$Subtype
+data <- subset(data, Subtype == subtype)[,-ncol(data)]
+
+selected_variables <- c("KEGG_MEDICUS_REFERENCE_TNF_RIPK1_3_SIGNALING_PATHWAY",
+                        "REACTOME_DEFECTIVE_RIPK1_MEDIATED_REGULATED_NECROSIS",
+                        "REACTOME_TLR3_MEDIATED_TICAM1_DEPENDENT_PROGRAMMED_CELL_DEATH")
+  
+
+data_filt <- data[, c(selected_variables, "Group")]
+data_filt$Subtype <- subtype
+data_filt <- na.omit(data_filt)
+
+data <- df
+data$Group <- NA
+data$Group[rownames(data) %in% subset(clin, `Duration of Chemotherapy (Alkylating Agent)` >= 30)$ID] <- "Alkylating Agent"
+
+data <- na.omit(data)
+
+clin3 <- subset(all_data2, ID %in% row.names(data))
+data <- data[clin3$ID,]
+
+data$Subtype <- clin3$Subtype
+data <- subset(data, Subtype == subtype)[,-ncol(data)]
+
+selected_variables <- c("KEGG_MEDICUS_REFERENCE_TNF_RIPK1_3_SIGNALING_PATHWAY",
+                        "REACTOME_DEFECTIVE_RIPK1_MEDIATED_REGULATED_NECROSIS",
+                        "REACTOME_TLR3_MEDIATED_TICAM1_DEPENDENT_PROGRAMMED_CELL_DEATH")
+
+data_filt2 <- data[, c(selected_variables, "Group")]
+data_filt2$Subtype <- subtype
+data_filt2 <- na.omit(data_filt2)
+data_filt <- rbind(data_filt, data_filt2)
+
+data <- df
+data$Group <- NA
+data$Group[rownames(data) %in% subset(clin, `Duration of Chemotherapy (Antimetabolite)` >= 30)$ID] <- "Antimetabolite"
+
+data <- na.omit(data)
+
+clin3 <- subset(all_data2, ID %in% row.names(data))
+data <- data[clin3$ID,]
+
+data$Subtype <- clin3$Subtype
+data <- subset(data, Subtype == subtype)[,-ncol(data)]
+
+selected_variables <- c("KEGG_MEDICUS_REFERENCE_TNF_RIPK1_3_SIGNALING_PATHWAY",
+                        "REACTOME_DEFECTIVE_RIPK1_MEDIATED_REGULATED_NECROSIS",
+                        "REACTOME_TLR3_MEDIATED_TICAM1_DEPENDENT_PROGRAMMED_CELL_DEATH")
+
+data_filt2 <- data[, c(selected_variables, "Group")]
+data_filt2$Subtype <- subtype
+data_filt2 <- na.omit(data_filt2)
+data_filt <- rbind(data_filt, data_filt2)
+
+data <- df
+data$Group <- NA
+data$Group[rownames(data) %in% subset(clin, `Duration of Chemotherapy (Antracycline)` >= 30)$ID] <- "Antracycline"
+
+data <- na.omit(data)
+
+clin3 <- subset(all_data2, ID %in% row.names(data))
+data <- data[clin3$ID,]
+
+data$Subtype <- clin3$Subtype
+data <- subset(data, Subtype == subtype)[,-ncol(data)]
+
+selected_variables <- c("KEGG_MEDICUS_REFERENCE_TNF_RIPK1_3_SIGNALING_PATHWAY",
+                        "REACTOME_DEFECTIVE_RIPK1_MEDIATED_REGULATED_NECROSIS",
+                        "REACTOME_TLR3_MEDIATED_TICAM1_DEPENDENT_PROGRAMMED_CELL_DEATH")
+
+data_filt2 <- data[, c(selected_variables, "Group")]
+data_filt2$Subtype <- subtype
+data_filt2 <- na.omit(data_filt2)
+data_filt <- rbind(data_filt, data_filt2)
+
+
+data_filt <- data_filt %>% tidyr::pivot_longer( 
+                           cols = 1:(ncol(data_filt)-2), 
+                           names_to = "Pathway", 
+                           values_to = "ssGSEA_Score")
+  
+data_filt$Group <- factor(data_filt$Group)
+data_filt$Group <- relevel(data_filt$Group, ref = "Naive")
+  
+chemo_pathways_plot <- ggplot(data_filt, aes(x = Group, y = ssGSEA_Score, fill = Group)) +
+  geom_violin(width=1, position = position_dodge(1), trim = FALSE, color = NA,
+              draw_quantiles = c(0.5), quantile.color = "white", quantile.linetype = 0) +
+  theme_classic() + 
+  ggpubr::stat_compare_means(comparisons = list(c("Naive", "Alkylating Agent"), c("Naive", "Antimetabolite"),
+                                                c("Naive", "Antracycline"), c("Naive", "Taxane")),
+                             hide.ns = T) +
+  scale_fill_manual(values = c("Naive" = pal[1], "Alkylating Agent" = pal[2], "Antimetabolite" = pal[3],
+                               "Antracycline" = pal[4], "Taxane" = pal[5])) +
+  facet_wrap(~Pathway, scale = "free_y") +
+  theme(strip.text = element_text(size = 6))
+chemo_pathways_plot
+```
+```{r}
+
+subtype = "HR+/HER2-"
+data <- sa_df
+data$Group <- NA
+data$Group[rownames(data) %in% gsub("[^[:alnum:] ]", "", notreatment2$`specimenID/accessionID`)] <- "Naive"
+data$Group[rownames(data) %in% gsub("[^[:alnum:] ]", "", subset(clin, `Duration of Chemotherapy (Taxane)` >= 30)$ID)] <- "Taxane"
+
+data <- na.omit(data)
+
+clin3 <- subset(clin2, ID %in% row.names(data))
+data <- data[clin3$ID,]
+
+data$Subtype <- clin3$Subtype
+data <- subset(data, Subtype == subtype)[,-ncol(data)]
+
+selected_variables <- c("CD4.T.cells.Naïve.central.memory..S02.",
+                        "CD8.T.cells.Naïve.central.memory..S01.")
+
+  
+data_filt <- data[, c(selected_variables, "Group")]
+data_filt$Subtype <- subtype
+data_filt <- na.omit(data_filt)
+
+data <- sa_df
+data$Group <- NA
+data$Group[rownames(data) %in% gsub("[^[:alnum:] ]", "", subset(clin, `Duration of Chemotherapy (Alkylating Agent)` >= 30)$ID)] <- "Alkylating Agent"
+
+data <- na.omit(data)
+
+clin3 <- subset(clin2, ID %in% row.names(data))
+data <- data[clin3$ID,]
+
+data$Subtype <- clin3$Subtype
+data <- subset(data, Subtype == subtype)[,-ncol(data)]
+
+selected_variables <- c("CD4.T.cells.Naïve.central.memory..S02.",
+                        "CD8.T.cells.Naïve.central.memory..S01.")
+
+  
+data_filt2 <- data[, c(selected_variables, "Group")]
+data_filt2$Subtype <- subtype
+data_filt2 <- na.omit(data_filt2)
+data_filt <- rbind(data_filt, data_filt2)
+
+data <- sa_df
+data$Group <- NA
+data$Group[rownames(data) %in% gsub("[^[:alnum:] ]", "", subset(clin, `Duration of Chemotherapy (Antimetabolite)` >= 30)$ID)] <- "Antimetabolite"
+
+data <- na.omit(data)
+
+clin3 <- subset(clin2, ID %in% row.names(data))
+data <- data[clin3$ID,]
+
+data$Subtype <- clin3$Subtype
+data <- subset(data, Subtype == subtype)[,-ncol(data)]
+
+selected_variables <- c("CD4.T.cells.Naïve.central.memory..S02.",
+                        "CD8.T.cells.Naïve.central.memory..S01.")
+
+  
+data_filt2 <- data[, c(selected_variables, "Group")]
+data_filt2$Subtype <- subtype
+data_filt2 <- na.omit(data_filt2)
+data_filt <- rbind(data_filt, data_filt2)
+
+
+data <- sa_df
+data$Group <- NA
+data$Group[rownames(data) %in% gsub("[^[:alnum:] ]", "", subset(clin, `Duration of Chemotherapy (Antracycline)` >= 30)$ID)] <- "Antracycline"
+
+data <- na.omit(data)
+
+clin3 <- subset(clin2, ID %in% row.names(data))
+data <- data[clin3$ID,]
+
+data$Subtype <- clin3$Subtype
+data <- subset(data, Subtype == subtype)[,-ncol(data)]
+
+selected_variables <- c("CD4.T.cells.Naïve.central.memory..S02.",
+                        "CD8.T.cells.Naïve.central.memory..S01.")
+
+  
+data_filt2 <- data[, c(selected_variables, "Group")]
+data_filt2$Subtype <- subtype
+data_filt2 <- na.omit(data_filt2)
+data_filt <- rbind(data_filt, data_filt2)
+
+data_filt <- data_filt %>% tidyr::pivot_longer( 
+                           cols = 1:(ncol(data_filt)-2), 
+                           names_to = "State", 
+                           values_to = "Abundance")
+  
+data_filt$Group <- factor(data_filt$Group)
+data_filt$Group <- relevel(data_filt$Group, ref = "Naive")
+  
+chemo_state_plot <- ggplot(data_filt, aes(x = Group, y = Abundance, fill = Group)) +
+  geom_violin(width=1, position = position_dodge(1), trim = FALSE, color = NA,
+              draw_quantiles = c(0.5), quantile.color = "white", quantile.linetype = 0) +
+  theme_classic() + 
+  ggpubr::stat_compare_means(comparisons = list(c("Naive", "Alkylating Agent"), c("Naive", "Antimetabolite"),
+                                                c("Naive", "Antracycline"), c("Naive", "Taxane")),
+                             hide.ns = T) +
+  scale_fill_manual(values = c("Naive" = pal[1], "Alkylating Agent" = pal[2], "Antimetabolite" = pal[3],
+                               "Antracycline" = pal[4], "Taxane" = pal[5])) +
+  facet_wrap(~State, scale = "free_y") +
+  theme(strip.text = element_text(size = 6))
+chemo_state_plot
+```
+
+
+```{r}
+chemo_plots <- ggpubr::ggarrange(chemo_pathways_plot, chemo_state_plot, ncol = 2, nrow = 1,
+                  align = "hv", common.legend = T,
+                  widths = c(1, 0.75))
+hormone_plots <- ggpubr::ggarrange(hormone_pathways_plot, hormone_state_plot, ncol = 2, align = "hv", common.legend = T,
+                  widths = c(0.66, 1))
+
+ggpubr::ggarrange(hormone_plots, chemo_plots, nrow = 2, align = "hv", heights = c(1, 0.7))
+```
+
+
+
+Genomic Data
+
+Organize datasets (convert to gene-level mutation and CNA features for LASSO model)
+```{r}
+mutations <- read.csv("coh_breast_cohort_snv_updated.csv")
+gain <- read.csv("coh_breast_cohort_cna_gain_v2.csv")
+loss <- read.csv("coh_breast_cohort_cna_loss_v2.csv")
+
+ids <- read.csv("uuid_studyid_match_updated.csv")
+ids_original <- rbind(read_excel("HB-1984_CR_PCDM_specimenID.xlsx", sheet = " CR_Tests "),
+                      read_excel("HB-1984_CR_PCDM_specimenID.xlsx", sheet = "PCDM_Test"))
+colnames(ids_original)[3] <- colnames(ids)[1]
+ids_original$accessionNumber <- toupper(ids_original$accessionNumber)
+ids_original <- subset(ids_original, accessionNumber %in% ids$accessionNumber)
+ids2 <- merge(ids, ids_original[,c(1,3)], by = "accessionNumber")
+
+ids2 <- ids2 %>% 
+  arrange(match(ids2$StudyID, ids$StudyID))
+
+colnames(mutations) <- c("StudyID", paste0("SNV_", colnames(mutations)[-1]))
+colnames(gain) <- c(paste0("GAIN_", colnames(gain)[-ncol(gain)]), "StudyID")
+colnames(loss) <- c(paste0("LOSS_", colnames(loss)[-ncol(loss)]), "StudyID")
+
+cna <- merge(gain, loss, by = "StudyID")
+mutations <- merge(mutations, cna, by = "StudyID")
+
+mutations <- merge(mutations, ids2, by = "StudyID")
+mutations <- mutations[,-c(1,ncol(mutations))]
+```
+
+```{r}
+clin <- before2_times
+clin$ID <- toupper(clin$ID)
+
+clin <- clin[,c(4,2,3,5:ncol(clin))]
+
+colnames(rna) <- gsub("[.]", "-", colnames(rna))
+
+missing_pretreatment <- setdiff(colnames(rna), clin$ID)
+
+clin <- subset(clin, ID %in% mutations$accessionNumber)
+
+clin[,4:ncol(clin)] <- apply(clin[,4:ncol(clin)], 2, as.numeric)
+### endocrine therapy only
+clin$ET_Sum <- as.numeric(rowSums(clin[,grep("Hormone", colnames(clin))]))
+
+clin$Chemo_Sum <- as.numeric(rowSums(clin[,grep("Chemo", colnames(clin))]))
+
+other_cols <- setdiff(colnames(clin), c(colnames(clin)[grep("Hormone", colnames(clin))], "ID", "Stage", "Subtype", "ET_Sum", "Chemo_Sum", "Other_Sum"))
+clin$Other_Sum <- as.numeric(rowSums(clin[,other_cols]))
+endocrine_only <- subset(clin, ET_Sum > 30 & Other_Sum == 0)
+
+chemo <- subset(clin, Chemo_Sum >= 30)
+
+cdk <- subset(clin, `Duration of CDK Inhibitor` >= 30)
+
+her2 <- subset(clin, `Duration of HER2/ERBB Inhibitor` >= 30)
+
+all_other <- subset(clin, Other_Sum >= 30)
+```
+
+```{r}
+mut_list = list()
+i <- 1
+for (subtype in c("HR+/HER2-")){
+  print(subtype)
+  data <- mutations
+  data$Group <- NA
+  data$Group[data$accessionNumber %in% notreatment2$`specimenID/accessionID`] <- "Naive"
+  data$Group[data$accessionNumber %in% endocrine_only$ID] <- "Hormone"
+  
+  data <- na.omit(unique(data))
+
+  clin3 <- subset(all_data2, ID %in% data$accessionNumber)
+  data <- subset(data, accessionNumber %in% clin3$ID)
+  row.names(clin3) <- clin3$ID
+  clin3 <- clin3[data$accessionNumber,]
+  data$Subtype <- clin3$Subtype
+  data <- subset(data, Subtype == subtype)[,-ncol(data)]
+  
+  groups <- data$Group
+  
+  data <- data[,-c((ncol(data)-1):ncol(data))]
+  
+  data <- data.frame(apply(data, 2, as.numeric))
+  data <- data[, apply(data, 2, var, na.rm=TRUE) != 0]
+  # hormone vs nontreated
+  set.seed(1)
+  fit1 <- cv.glmnet(as.matrix(data[,-ncol(data)]), 
+                    groups, family = "binomial", alpha = 1)
+  coef_matrix <- as.matrix(coef(fit1, s = "lambda.min"))
+  non_zero_vars <- coef_matrix[coef_matrix[, 1] != 0, ]
+  non_zero_df <- data.frame("Val" = as.numeric(non_zero_vars), "Name" = names(non_zero_vars))
+  non_zero_df <- non_zero_df[order(-non_zero_df$Val),]
+  selected_variables <- names(non_zero_vars)[names(non_zero_vars) != "(Intercept)"]
+  print(selected_variables)
+  data <- data[,selected_variables]
+  data$Group <- groups
+  
+  data <- data %>% tidyr::pivot_longer(
+    cols = 1:(ncol(data)-1),
+    names_to = "Gene",
+    values_to = "Mutations"
+  )
+  
+  data_freq <- data.frame()
+  for (gene in unique(data$Gene)){
+    g1 <- unique(data$Group)[1]
+    g2 <- unique(data$Group)[2]
+    freq1 <- sum(subset(data, Group == g1 & Gene == gene)$Mutations) / nrow(subset(data, Group == g1 & Gene == gene))
+    freq2 <- sum(subset(data, Group == g2 & Gene == gene)$Mutations) / nrow(subset(data, Group == g2 & Gene == gene))
+    row <- data.frame("Gene" = gene, "Frequency" = c(freq1, freq2),
+                      "Group" = c(g1, g2))
+    data_freq <- rbind(data_freq, row)
+  }
+  
+  plot <- ggplot(data_freq, aes(x = Group, fill = Group, y = Frequency)) +
+    geom_col(stat = "identity", position = "dodge") +
+    theme_classic() +
+    facet_wrap(~Gene, scale = "free_y")
+  
+  markers <- rbind(markers, data.frame("Data" = "DNA", "Marker" = unique(data_freq$Gene), "Drug" = "Hormone Therapy"))
+
+  mut_list[[i]] <- plot
+  i <- i + 1
+}
+```
+
+
+
+```{r}
+cdk_mut_list = list()
+i <- 1
+for (subtype in c("HR+/HER2-")){
+  print(subtype)
+  data <- mutations
+  data$Group <- NA
+  data$Group[data$accessionNumber %in% notreatment2$`specimenID/accessionID`] <- "Naive"
+  data$Group[data$accessionNumber %in% cdk$ID] <- "CDK Inhibitor"
+  
+  data <- na.omit(unique(data))
+
+  clin3 <- subset(all_data2, ID %in% data$accessionNumber)
+  data <- subset(data, accessionNumber %in% clin3$ID)
+  row.names(clin3) <- clin3$ID
+  clin3 <- clin3[data$accessionNumber,]
+  data$Subtype <- clin3$Subtype
+  data <- subset(data, Subtype == subtype)[,-ncol(data)]
+  
+  groups <- data$Group
+  
+  data <- data[,-c((ncol(data)-1):ncol(data))]
+  
+  data <- data.frame(apply(data, 2, as.numeric))
+  data <- data[, apply(data, 2, var, na.rm=TRUE) != 0]
+  # hormone vs nontreated
+  set.seed(1)
+  fit1 <- cv.glmnet(as.matrix(data[,-ncol(data)]), 
+                    groups, family = "binomial", alpha = 1)
+  coef_matrix <- as.matrix(coef(fit1, s = "lambda.min"))
+  non_zero_vars <- coef_matrix[coef_matrix[, 1] != 0, ]
+  non_zero_df <- data.frame("Val" = as.numeric(non_zero_vars), "Name" = names(non_zero_vars))
+  non_zero_df <- non_zero_df[order(-non_zero_df$Val),]
+  selected_variables <- names(non_zero_vars)[names(non_zero_vars) != "(Intercept)"]
+  print(selected_variables)
+  data <- data[,selected_variables]
+  data$Group <- groups
+  
+  data <- data %>% tidyr::pivot_longer(
+    cols = 1:(ncol(data)-1),
+    names_to = "Gene",
+    values_to = "Mutations"
+  )
+  
+  data_freq <- data.frame()
+  for (gene in unique(data$Gene)){
+    g1 <- unique(data$Group)[1]
+    g2 <- unique(data$Group)[2]
+    freq1 <- sum(subset(data, Group == g1 & Gene == gene)$Mutations) / nrow(subset(data, Group == g1 & Gene == gene))
+    freq2 <- sum(subset(data, Group == g2 & Gene == gene)$Mutations) / nrow(subset(data, Group == g2 & Gene == gene))
+    row <- data.frame("Gene" = gene, "Frequency" = c(freq1, freq2),
+                      "Group" = c(g1, g2))
+    data_freq <- rbind(data_freq, row)
+  }
+  
+  data_freq$Group <- factor(data_freq$Group)
+  data_freq$Group <- relevel(data_freq$Group, ref = "Naive")
+  
+  data_freq <- subset(data_freq, Gene %in% subset(data_freq, Group != "Naive" & Frequency >= 0.05)$Gene)
+  
+  plot <- ggplot(data_freq, aes(x = Group, fill = Group, y = Frequency)) +
+    geom_col(stat = "identity", position = "dodge") +
+    theme_classic() +
+    facet_wrap(~Gene, scale = "free_y")
+  
+  markers <- rbind(markers, data.frame("Data" = "DNA", "Marker" = unique(data_freq$Gene), "Drug" = "CDK Inhibitor"))
+
+  cdk_mut_list[[i]] <- plot
+  i <- i + 1
+}
+```
+
+
+```{r}
+am_mut_list = list()
+i <- 1
+for (subtype in c("HR+/HER2-", "HR+/HER2+")){
+  print(subtype)
+  data <- mutations
+  data$Group <- NA
+  data$Group[data$accessionNumber %in% notreatment2$`specimenID/accessionID`] <- "Naive"
+  data$Group[data$accessionNumber %in% subset(clin, `Duration of Chemotherapy (Antimetabolite)` >= 30)$ID] <- "Antimetabolite"
+  
+  data <- na.omit(unique(data))
+  
+
+  clin3 <- subset(all_data2, ID %in% data$accessionNumber)
+  
+  data <- subset(data, accessionNumber %in% clin3$ID)
+  row.names(clin3) <- clin3$ID
+  clin3 <- clin3[data$accessionNumber,]
+  data$Subtype <- clin3$Subtype
+  data <- subset(data, Subtype == subtype)[,-ncol(data)]
+  
+  groups <- data$Group
+  
+  data <- data[,-c((ncol(data)-1):ncol(data))]
+  
+  data <- data.frame(apply(data, 2, as.numeric))
+  data <- data[, apply(data, 2, var, na.rm=TRUE) != 0]
+  # hormone vs nontreated
+  set.seed(1)
+  fit1 <- cv.glmnet(as.matrix(data[,-ncol(data)]), 
+                    groups, family = "binomial", alpha = 1)
+  coef_matrix <- as.matrix(coef(fit1, s = "lambda.min"))
+  non_zero_vars <- coef_matrix[coef_matrix[, 1] != 0, ]
+  non_zero_df <- data.frame("Val" = as.numeric(non_zero_vars), "Name" = names(non_zero_vars))
+  non_zero_df <- non_zero_df[order(-non_zero_df$Val),]
+  selected_variables <- names(non_zero_vars)[names(non_zero_vars) != "(Intercept)"]
+  print(selected_variables)
+  data <- data[,selected_variables]
+  data$Group <- groups
+  
+  data <- data %>% tidyr::pivot_longer(
+    cols = 1:(ncol(data)-1),
+    names_to = "Gene",
+    values_to = "Mutations"
+  )
+  
+  data_freq <- data.frame()
+  for (gene in unique(data$Gene)){
+    g1 <- unique(data$Group)[1]
+    g2 <- unique(data$Group)[2]
+    freq1 <- sum(subset(data, Group == g1 & Gene == gene)$Mutations) / nrow(subset(data, Group == g1 & Gene == gene))
+    freq2 <- sum(subset(data, Group == g2 & Gene == gene)$Mutations) / nrow(subset(data, Group == g2 & Gene == gene))
+    row <- data.frame("Gene" = gene, "Frequency" = c(freq1, freq2),
+                      "Group" = c(g1, g2))
+    data_freq <- rbind(data_freq, row)
+  }
+  
+  data_freq$Group <- factor(data_freq$Group)
+  data_freq$Group <- relevel(data_freq$Group, ref = "Naive")
+  
+  if (length(selected_variables) > 20){
+  data_freq <- subset(data_freq, Gene %in% subset(data_freq, Group != "Naive" & Frequency >= 0.05)$Gene)
+  }
+  
+  plot <- ggplot(data_freq, aes(x = Group, fill = Group, y = Frequency)) +
+    geom_col(stat = "identity", position = "dodge") +
+    theme_classic() +
+    facet_wrap(~Gene, scale = "free_y")
+  
+  markers <- rbind(markers, data.frame("Data" = "DNA", "Marker" = unique(data_freq$Gene), "Drug" = "Antimetabolite"))
+
+  am_mut_list[[i]] <- plot
+  i <- i + 1
+}
+```
+
+```{r}
+aa_mut_list = list()
+i <- 1
+for (subtype in c("HR+/HER2-","HR-/HER2-")){
+  print(subtype)
+  data <- mutations
+  data$Group <- NA
+  data$Group[data$accessionNumber %in% notreatment2$`specimenID/accessionID`] <- "Naive"
+  data$Group[data$accessionNumber %in% subset(clin, `Duration of Chemotherapy (Alkylating Agent)` >= 30)$ID] <- "Alylating Agent"
+  
+  data <- na.omit(unique(data))
+  
+
+  clin3 <- subset(all_data2, ID %in% data$accessionNumber)
+  
+  data <- subset(data, accessionNumber %in% clin3$ID)
+  row.names(clin3) <- clin3$ID
+  clin3 <- clin3[data$accessionNumber,]
+  data$Subtype <- clin3$Subtype
+  data <- subset(data, Subtype == subtype)[,-ncol(data)]
+  
+  groups <- data$Group
+  
+  data <- data[,-c((ncol(data)-1):ncol(data))]
+  
+  data <- data.frame(apply(data, 2, as.numeric))
+  data <- data[, apply(data, 2, var, na.rm=TRUE) != 0]
+  # hormone vs nontreated
+  set.seed(1)
+  fit1 <- cv.glmnet(as.matrix(data[,-ncol(data)]), 
+                    groups, family = "binomial", alpha = 1)
+  coef_matrix <- as.matrix(coef(fit1, s = "lambda.min"))
+  non_zero_vars <- coef_matrix[coef_matrix[, 1] != 0, ]
+  non_zero_df <- data.frame("Val" = as.numeric(non_zero_vars), "Name" = names(non_zero_vars))
+  non_zero_df <- non_zero_df[order(-non_zero_df$Val),]
+  selected_variables <- names(non_zero_vars)[names(non_zero_vars) != "(Intercept)"]
+  print(selected_variables)
+  data <- data[,selected_variables]
+  data$Group <- groups
+  
+  data <- data %>% tidyr::pivot_longer(
+    cols = 1:(ncol(data)-1),
+    names_to = "Gene",
+    values_to = "Mutations"
+  )
+  
+  data_freq <- data.frame()
+  for (gene in unique(data$Gene)){
+    g1 <- unique(data$Group)[1]
+    g2 <- unique(data$Group)[2]
+    freq1 <- sum(subset(data, Group == g1 & Gene == gene)$Mutations) / nrow(subset(data, Group == g1 & Gene == gene))
+    freq2 <- sum(subset(data, Group == g2 & Gene == gene)$Mutations) / nrow(subset(data, Group == g2 & Gene == gene))
+    row <- data.frame("Gene" = gene, "Frequency" = c(freq1, freq2),
+                      "Group" = c(g1, g2))
+    data_freq <- rbind(data_freq, row)
+  }
+  
+  data_freq$Group <- factor(data_freq$Group)
+  data_freq$Group <- relevel(data_freq$Group, ref = "Naive")
+  
+  if (length(selected_variables) > 20){
+  data_freq <- subset(data_freq, Gene %in% subset(data_freq, Group != "Naive" & Frequency >= 0.05)$Gene)
+  }
+  
+  plot <- ggplot(data_freq, aes(x = Group, fill = Group, y = Frequency)) +
+    geom_col(stat = "identity", position = "dodge") +
+    theme_classic() +
+    facet_wrap(~Gene, scale = "free_y")
+  
+  markers <- rbind(markers, data.frame("Data" = "DNA", "Marker" = unique(data_freq$Gene), "Drug" = "Alkylating Agent"))
+
+  aa_mut_list[[i]] <- plot
+  i <- i + 1
+}
+```
+
+```{r}
+antra_mut_list = list()
+i <- 1
+for (subtype in c("HR+/HER2-",  "HR-/HER2-")){
+  print(subtype)
+  data <- mutations
+  data$Group <- NA
+  data$Group[data$accessionNumber %in% notreatment2$`specimenID/accessionID`] <- "Naive"
+  data$Group[data$accessionNumber %in% subset(clin, `Duration of Chemotherapy (Antracycline)` >= 30)$ID] <- "Antracycline"
+  
+  data <- na.omit(unique(data))
+  
+
+  clin3 <- subset(all_data2, ID %in% data$accessionNumber)
+  
+  data <- subset(data, accessionNumber %in% clin3$ID)
+  row.names(clin3) <- clin3$ID
+  clin3 <- clin3[data$accessionNumber,]
+  data$Subtype <- clin3$Subtype
+  data <- subset(data, Subtype == subtype)[,-ncol(data)]
+  
+  groups <- data$Group
+  
+  data <- data[,-c((ncol(data)-1):ncol(data))]
+  
+  data <- data.frame(apply(data, 2, as.numeric))
+  data <- data[, apply(data, 2, var, na.rm=TRUE) != 0]
+  # hormone vs nontreated
+  set.seed(1)
+  fit1 <- cv.glmnet(as.matrix(data[,-ncol(data)]), 
+                    groups, family = "binomial", alpha = 1)
+  coef_matrix <- as.matrix(coef(fit1, s = "lambda.min"))
+  non_zero_vars <- coef_matrix[coef_matrix[, 1] != 0, ]
+  non_zero_df <- data.frame("Val" = as.numeric(non_zero_vars), "Name" = names(non_zero_vars))
+  non_zero_df <- non_zero_df[order(-non_zero_df$Val),]
+  selected_variables <- names(non_zero_vars)[names(non_zero_vars) != "(Intercept)"]
+  print(selected_variables)
+  data <- data[,selected_variables]
+  data$Group <- groups
+  
+  data <- data %>% tidyr::pivot_longer(
+    cols = 1:(ncol(data)-1),
+    names_to = "Gene",
+    values_to = "Mutations"
+  )
+  
+  data_freq <- data.frame()
+  for (gene in unique(data$Gene)){
+    g1 <- unique(data$Group)[1]
+    g2 <- unique(data$Group)[2]
+    freq1 <- sum(subset(data, Group == g1 & Gene == gene)$Mutations) / nrow(subset(data, Group == g1 & Gene == gene))
+    freq2 <- sum(subset(data, Group == g2 & Gene == gene)$Mutations) / nrow(subset(data, Group == g2 & Gene == gene))
+    row <- data.frame("Gene" = gene, "Frequency" = c(freq1, freq2),
+                      "Group" = c(g1, g2))
+    data_freq <- rbind(data_freq, row)
+  }
+  
+  data_freq$Group <- factor(data_freq$Group)
+  data_freq$Group <- relevel(data_freq$Group, ref = "Naive")
+  
+  if (length(selected_variables) > 20){
+  data_freq <- subset(data_freq, Gene %in% subset(data_freq, Group != "Naive" & Frequency >= 0.05)$Gene)
+  }
+  
+  plot <- ggplot(data_freq, aes(x = Group, fill = Group, y = Frequency)) +
+    geom_col(stat = "identity", position = "dodge") +
+    theme_classic() +
+    facet_wrap(~Gene, scale = "free_y")
+  
+  markers <- rbind(markers, data.frame("Data" = "DNA", "Marker" = unique(data_freq$Gene), "Drug" = "Antracycline"))
+
+  antra_mut_list[[i]] <- plot
+  i <- i + 1
+}
+```
+
+
+
+```{r}
+pb_mut_list = list()
+i <- 1
+for (subtype in c("HR+/HER2-", "HR-/HER2+", "HR-/HER2-")){
+  print(subtype)
+  data <- mutations
+  data$Group <- NA
+  data$Group[data$accessionNumber %in% notreatment2$`specimenID/accessionID`] <- "Naive"
+  data$Group[data$accessionNumber %in% subset(clin, `Duration of Chemotherapy (Platinum Based)` >= 30)$ID] <- "Platinum Based"
+  
+  data <- na.omit(unique(data))
+  
+
+  clin3 <- subset(all_data2, ID %in% data$accessionNumber)
+  
+  data <- subset(data, accessionNumber %in% clin3$ID)
+  row.names(clin3) <- clin3$ID
+  clin3 <- clin3[data$accessionNumber,]
+  data$Subtype <- clin3$Subtype
+  data <- subset(data, Subtype == subtype)[,-ncol(data)]
+  
+  groups <- data$Group
+  
+  data <- data[,-c((ncol(data)-1):ncol(data))]
+  
+  data <- data.frame(apply(data, 2, as.numeric))
+  data <- data[, apply(data, 2, var, na.rm=TRUE) != 0]
+  # hormone vs nontreated
+  set.seed(1)
+  fit1 <- cv.glmnet(as.matrix(data[,-ncol(data)]), 
+                    groups, family = "binomial", alpha = 1)
+  coef_matrix <- as.matrix(coef(fit1, s = "lambda.min"))
+  non_zero_vars <- coef_matrix[coef_matrix[, 1] != 0, ]
+  non_zero_df <- data.frame("Val" = as.numeric(non_zero_vars), "Name" = names(non_zero_vars))
+  non_zero_df <- non_zero_df[order(-non_zero_df$Val),]
+  selected_variables <- names(non_zero_vars)[names(non_zero_vars) != "(Intercept)"]
+  print(selected_variables)
+  data <- data[,selected_variables]
+  data$Group <- groups
+  
+  data <- data %>% tidyr::pivot_longer(
+    cols = 1:(ncol(data)-1),
+    names_to = "Gene",
+    values_to = "Mutations"
+  )
+  
+  data_freq <- data.frame()
+  for (gene in unique(data$Gene)){
+    g1 <- unique(data$Group)[1]
+    g2 <- unique(data$Group)[2]
+    freq1 <- sum(subset(data, Group == g1 & Gene == gene)$Mutations) / nrow(subset(data, Group == g1 & Gene == gene))
+    freq2 <- sum(subset(data, Group == g2 & Gene == gene)$Mutations) / nrow(subset(data, Group == g2 & Gene == gene))
+    row <- data.frame("Gene" = gene, "Frequency" = c(freq1, freq2),
+                      "Group" = c(g1, g2))
+    data_freq <- rbind(data_freq, row)
+  }
+  
+  data_freq$Group <- factor(data_freq$Group)
+  data_freq$Group <- relevel(data_freq$Group, ref = "Naive")
+  
+  if (length(selected_variables) > 20){
+  data_freq <- subset(data_freq, Gene %in% subset(data_freq, Group != "Naive" & Frequency >= 0.05)$Gene)
+  }
+  
+  plot <- ggplot(data_freq, aes(x = Group, fill = Group, y = Frequency)) +
+    geom_col(stat = "identity", position = "dodge") +
+    theme_classic() +
+    facet_wrap(~Gene, scale = "free_y")
+  
+  markers <- rbind(markers, data.frame("Data" = "DNA", "Marker" = unique(data_freq$Gene), "Drug" = "Platinum-Based"))
+
+  pb_mut_list[[i]] <- plot
+  i <- i + 1
+}
+```
+
+
+```{r}
+taxane_mut_list = list()
+i <- 1
+for (subtype in c("HR+/HER2-", "HR-/HER2+", "HR-/HER2-")){
+  print(subtype)
+  data <- mutations
+  data$Group <- NA
+  data$Group[data$accessionNumber %in% notreatment2$`specimenID/accessionID`] <- "Naive"
+  data$Group[data$accessionNumber %in% subset(clin, `Duration of Chemotherapy (Taxane)` >= 30)$ID] <- "Taxane"
+  
+  data <- na.omit(unique(data))
+  
+
+  clin3 <- subset(all_data2, ID %in% data$accessionNumber)
+  
+  data <- subset(data, accessionNumber %in% clin3$ID)
+  row.names(clin3) <- clin3$ID
+  clin3 <- clin3[data$accessionNumber,]
+  data$Subtype <- clin3$Subtype
+  data <- subset(data, Subtype == subtype)[,-ncol(data)]
+  
+  groups <- data$Group
+  
+  data <- data[,-c((ncol(data)-1):ncol(data))]
+  
+  data <- data.frame(apply(data, 2, as.numeric))
+  data <- data[, apply(data, 2, var, na.rm=TRUE) != 0]
+  # hormone vs nontreated
+  set.seed(1)
+  fit1 <- cv.glmnet(as.matrix(data[,-ncol(data)]), 
+                    groups, family = "binomial", alpha = 1)
+  coef_matrix <- as.matrix(coef(fit1, s = "lambda.min"))
+  non_zero_vars <- coef_matrix[coef_matrix[, 1] != 0, ]
+  non_zero_df <- data.frame("Val" = as.numeric(non_zero_vars), "Name" = names(non_zero_vars))
+  non_zero_df <- non_zero_df[order(-non_zero_df$Val),]
+  selected_variables <- names(non_zero_vars)[names(non_zero_vars) != "(Intercept)"]
+  print(selected_variables)
+  data <- data[,selected_variables]
+  data$Group <- groups
+  
+  data <- data %>% tidyr::pivot_longer(
+    cols = 1:(ncol(data)-1),
+    names_to = "Gene",
+    values_to = "Mutations"
+  )
+  
+  data_freq <- data.frame()
+  for (gene in unique(data$Gene)){
+    g1 <- unique(data$Group)[1]
+    g2 <- unique(data$Group)[2]
+    freq1 <- sum(subset(data, Group == g1 & Gene == gene)$Mutations) / nrow(subset(data, Group == g1 & Gene == gene))
+    freq2 <- sum(subset(data, Group == g2 & Gene == gene)$Mutations) / nrow(subset(data, Group == g2 & Gene == gene))
+    row <- data.frame("Gene" = gene, "Frequency" = c(freq1, freq2),
+                      "Group" = c(g1, g2))
+    data_freq <- rbind(data_freq, row)
+  }
+  
+  data_freq$Group <- factor(data_freq$Group)
+  data_freq$Group <- relevel(data_freq$Group, ref = "Naive")
+  
+  if (length(selected_variables) > 20){
+  data_freq <- subset(data_freq, Gene %in% subset(data_freq, Group != "Naive" & Frequency >= 0.05)$Gene)
+  }
+  
+  plot <- ggplot(data_freq, aes(x = Group, fill = Group, y = Frequency)) +
+    geom_col(stat = "identity", position = "dodge") +
+    theme_classic() +
+    facet_wrap(~Gene, scale = "free_y")
+  
+  markers <- rbind(markers, data.frame("Data" = "DNA", "Marker" = unique(data_freq$Gene), "Drug" = "Taxane"))
+
+  taxane_mut_list[[i]] <- plot
+  i <- i + 1
+}
+```
+
+Save files for mutationmapper input (Figure 3g)
+
+```{r}
+vcf <- read.csv("~//Documents//COH Breast Cohort//Files for UCSD//coh_bc_merged_vcf.csv")
+colnames(vcf) <- vcf[116,]
+vcf <- vcf[-c(1:116),]
+
+vcf <- merge(vcf, ids2, by = "StudyID")
+
+get_genename <- function(x){
+  x2 <- strsplit(x, split = "[|]")
+  x3 <- x2[[1]][4]
+  return(x3)
+}
+vcf$Gene <- lapply(vcf$INFO, get_genename)
+
+cdk_vcf <- subset(vcf, accessionNumber %in% cdk$ID)
+cdk_vcf <- subset(cdk_vcf, Gene %in% c("ESR1"))
+```
+
+
